@@ -1,4 +1,4 @@
-# PM2.5 Prediction — Ho Chi Minh City
+# PM2.5 Prediction - Ho Chi Minh City
 
 Forecasting PM2.5 air pollution levels in Ho Chi Minh City using sensor data from OpenAQ combined with historical weather data from Open-Meteo.
 
