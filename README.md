@@ -22,7 +22,6 @@ We build an end-to-end pipeline including:
 - [Project Structure](#project-structure)
 - [Installation](#installation)
 - [Data](#data)
-- [Roadmap](#roadmap)
 
 ---
 
