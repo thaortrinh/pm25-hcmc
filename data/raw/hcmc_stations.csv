@@ -1,0 +1,12 @@
+location_id,location_name,sensor_id,is_monitor,provider,datetime_first,datetime_last,distance_m
+3276359,CMT8,11357424,False,AirGradient,2024-11-19 11:00:00+00:00,2026-03-23 05:00:00+00:00,6096
+6273386,VNUHCMUS CAMPUS 1,15694534,False,AirGradient,2026-03-16 03:00:00+00:00,2026-03-23 05:00:00+00:00,8898
+6068138,Care Centre,14325346,False,AirGradient,2025-10-09 01:00:00+00:00,2025-12-08 02:00:00+00:00,6375
+4743591,"Trường Đại học Khoa học Tự nhiên, ĐHQG-HCM, Cơ sở Linh Trung.",13332026,False,AirGradient,2025-06-15 05:00:00+00:00,2025-06-15 08:00:00+00:00,19302
+7440,US Diplomatic Post: Ho Chi Minh City,21631,True,Ho Chi Minh City,2016-11-09 17:00:00+00:00,2025-03-04 12:00:00+00:00,8892
+2446,US Diplomatic Post: Ho Chi Minh City,4681,True,Ho Chi Minh City,2016-02-29 01:00:00+00:00,2016-11-09 16:00:00+00:00,8942
+268816,outdoor,1552804,False,HabitatMap,,,17392
+268821,outdoor2,1552809,False,HabitatMap,,,17381
+268929,od3,1553310,False,HabitatMap,,,17399
+268935,od5,1553316,False,HabitatMap,,,16132
+268937,od6,1553318,False,HabitatMap,,,17381
