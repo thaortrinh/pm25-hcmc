@@ -21,7 +21,6 @@ We build an end-to-end pipeline including:
 - [Overview](#overview)
 - [Project Structure](#project-structure)
 - [Installation](#installation)
-- [Data Collection](#data-collection)
 - [Data](#data)
 - [Roadmap](#roadmap)
 
