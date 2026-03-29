@@ -102,16 +102,20 @@ def _fetch_pm25() -> tuple[float, list[tuple[str, float]]]:
     pm25_latest = pm25_entries[0]["value"]
 
     # ── Bước 2: 24h hourly history ───────────────────────────────────────────
+    now_utc = datetime.now(VN_TZ).astimezone(ZoneInfo("UTC"))
+    dt_from = (now_utc - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    dt_to = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+
     r = requests.get(
         f"{BASE_URL_OPENAQ}/sensors/{SENSOR_ID}/hours",
-        params={"limit": 24, "order_by": "datetime", "sort_order": "desc"},
+        params={"limit": 24, "datetime_from": dt_from, "datetime_to": dt_to},
         headers=HEADERS,
         timeout=10,
     )
     values_24h: list[tuple[str, float]] = []
     if r.ok:
         for row in r.json().get("results", []):
-            val = row.get("summary", {}).get("avg")
+            val = row.get("value")
             dt_local = row.get("period", {}).get("datetimeTo", {}).get("local")
             if val is not None and dt_local is not None:
                 values_24h.append((dt_local, val))
@@ -187,7 +191,8 @@ def get_current_data() -> CurrentData:
     try:
         pm25_latest, values_24h = _fetch_pm25()
         vals = [v for _, v in values_24h]
-        pm25_3h  = round(sum(vals[:3]) / min(3, len(vals)), 1)
+        last3 = vals[-3:] if len(vals) >= 3 else vals
+        pm25_3h  = round(sum(last3) / len(last3), 1)
         pm25_24h = round(sum(vals) / len(vals), 1)
     except Exception as e:
         station = f"{SENSOR_NAME} [OpenAQ lỗi: {e}]"
@@ -212,9 +217,6 @@ def get_current_data() -> CurrentData:
 def get_history_24h() -> list[HistoryPoint]:
     try:
         _, values_24h = _fetch_pm25()
-
-        # đảo lại: API trả về desc (mới nhất trước), chart cần oldest → latest
-        values_24h = list(reversed(values_24h))
 
         points = []
         for dt_str, val in values_24h:
