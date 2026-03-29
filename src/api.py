@@ -112,9 +112,9 @@ def _fetch_pm25() -> tuple[float, list[tuple[str, float]]]:
     if r.ok:
         for row in r.json().get("results", []):
             val = row.get("summary", {}).get("avg")
-            dt_utc = row.get("period", {}).get("datetimeTo", {}).get("utc")
-            if val is not None and dt_utc is not None:
-                values_24h.append((dt_utc, val))
+            dt_local = row.get("period", {}).get("datetimeTo", {}).get("local")
+            if val is not None and dt_local is not None:
+                values_24h.append((dt_local, val))
     if not values_24h:
         values_24h = [("", pm25_latest)]  # fallback
 
@@ -219,9 +219,8 @@ def get_history_24h() -> list[HistoryPoint]:
         points = []
         for dt_str, val in values_24h:
             if dt_str:
-                dt_utc = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-                dt_vn = dt_utc.astimezone(VN_TZ)
-                label = dt_vn.strftime("%H:%M")
+                dt = datetime.fromisoformat(dt_str)
+                label = dt.strftime("%H:%M")
             else:
                 label = datetime.now(VN_TZ).strftime("%H:%M")
             points.append(HistoryPoint(time=label, pm25=round(val, 1)))
