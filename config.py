@@ -1,5 +1,8 @@
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 ROOT_DIR = Path(__file__).parent
 DATA_RAW       = ROOT_DIR / "data" / "raw"
