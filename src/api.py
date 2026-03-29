@@ -1,43 +1,73 @@
+from __future__ import annotations
+
 """
-Data fetching layer.
-- get_current_data : PM2.5 từ OpenAQ v3 + meteorology từ Open-Meteo
-- get_history_24h  : TODO – thay bằng OpenAQ /hours data khi cần chart thực
-- get_forecast_6h  : TODO – thay bằng model ML khi sẵn sàng
+Live data layer.
+- OpenAQ supplies the latest available PM2.5 sensor readings and PM history
+- Open-Meteo supplies real-time weather, PM10, and gaseous pollutants
 """
 
-import random
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import TypedDict
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 import requests
 import streamlit as st
-from dotenv import load_dotenv
 
-from config import (
-    BASE_URL_OPENAQ,
-    HEADERS,
-    HCMC_LAT,
-    HCMC_LON,
-    HOURLY_VARIABLES,
-    LOCATION_ID,
-    SENSOR_ID,
-    SENSOR_NAME,
-)
+from config import HCMC_LAT, HCMC_LON, HOURLY_VARIABLES, SENSOR_NAME
+from src.aqi import VN_AQIResult, calculate_vn_aqi_hourly
+from src.services.openmeteo_client import OpenMeteoClient
+from src.services.openaq_client import OpenAQClient
 
-load_dotenv()
 
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+UTC_TZ = ZoneInfo("UTC")
+OPENMETEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+OPENMETEO_AIR_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
+
+AIR_QUALITY_VARS = {
+    "pm10": "pm10",
+    "co": "carbon_monoxide",
+    "no2": "nitrogen_dioxide",
+    "so2": "sulphur_dioxide",
+    "o3": "ozone",
+}
+
+DISPLAY_NAMES = {
+    "pm25": "PM2.5",
+    "pm10": "PM10",
+    "co": "CO",
+    "no2": "NO2",
+    "so2": "SO2",
+    "o3": "O3",
+}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TYPES
-# ══════════════════════════════════════════════════════════════════════════════
+class PollutantData(TypedDict):
+    code: str
+    label: str
+    value_1h: float | None
+    unit: str
+    hourly_24h: list[float | None]
+    updated_at: str
+
 
 class CurrentData(TypedDict):
-    pm25: float
-    pm25_3h: float
-    pm25_24h: float
+    station: str
+    updated_at: str
+    pm25_updated_at: str
+    weather_updated_at: str
+    air_quality_updated_at: str
+    aligned_model_at: str
+    pollutants: dict[str, PollutantData]
+    pm25: float | None
+    pm10: float | None
+    o3: float | None
+    no2: float | None
+    so2: float | None
+    co: float | None
+    pm25_3h: float | None
+    pm25_24h: float | None
     temp: float
     humidity: int
     wind: float
@@ -45,206 +75,226 @@ class CurrentData(TypedDict):
     precipitation: float
     pressure: float
     boundary_layer_height: float
-    updated_at: str
-    station: str
+    aqi: int | None
+    aqi_label: str
+    aqi_color: str
+    aqi_text_color: str
+    primary_pollutant: str | None
+
 
 class HistoryPoint(TypedDict):
     time: str
-    pm25: float
+    pm25: float | None
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# MOCK HELPERS  (vẫn dùng cho get_history_24h / get_forecast_6h)
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _mock_pm25_series(n: int, base: float = 38.0, noise: float = 8.0) -> list[float]:
-    values = []
-    val = base
-    for _ in range(n):
-        val += random.gauss(0, noise * 0.3)
-        val = max(5.0, min(200.0, val))
-        values.append(round(val, 1))
-    return values
+def _average(values: list[float | None]) -> float | None:
+    valid = [value for value in values if value is not None]
+    if not valid:
+        return None
+    return round(sum(valid) / len(valid), 1)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 1 – PM2.5  (OpenAQ v3)
-# Docs: https://docs.openaq.org
-# ══════════════════════════════════════════════════════════════════════════════
+def _window_average(pm_history: pd.DataFrame, hours: int) -> float | None:
+    if pm_history.empty:
+        return None
+    latest_timestamp = pd.to_datetime(pm_history["datetime"]).max()
+    cutoff = latest_timestamp - pd.Timedelta(hours=hours - 1)
+    window = pm_history[pd.to_datetime(pm_history["datetime"]) >= cutoff]
+    if window.empty:
+        return None
+    return round(float(window["pm25_avg"].mean()), 1)
+
 
 @st.cache_data(ttl=300)
-def _fetch_pm25() -> tuple[float, list[tuple[str, float]]]:
-    """
-    Trả về (pm25_latest, [(utc_timestamp, value), ...]).
+def _fetch_openaq_pm25_history(hours: int = 36) -> pd.DataFrame:
+    return OpenAQClient().fetch_pm25_history(lookback_hours=hours)
 
-    Bước 1 – GET /v3/locations/{LOCATION_ID}/latest
-        Lấy giá trị PM2.5 mới nhất từ SENSOR_ID đã biết trong config.
-
-    Bước 2 – GET /v3/sensors/{SENSOR_ID}/hours
-        Lấy 24 bản ghi hourly gần nhất (sort desc) kèm timestamp UTC.
-        Response format: period.datetimeFrom.utc, summary.avg
-    """
-    # ── Bước 1: latest PM2.5 ─────────────────────────────────────────────────
-    r = requests.get(
-        f"{BASE_URL_OPENAQ}/locations/{LOCATION_ID}/latest",
-        headers=HEADERS,
-        timeout=10,
-    )
-    r.raise_for_status()
-
-    pm25_entries = [
-        row for row in r.json().get("results", [])
-        if row["sensorsId"] == SENSOR_ID
-    ]
-    if not pm25_entries:
-        raise ValueError(f"Không tìm thấy dữ liệu cho sensor {SENSOR_ID} ({SENSOR_NAME})")
-
-    pm25_latest = pm25_entries[0]["value"]
-
-    # ── Bước 2: 24h hourly history ───────────────────────────────────────────
-    now_utc = datetime.now(VN_TZ).astimezone(ZoneInfo("UTC"))
-    dt_from = (now_utc - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    dt_to = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    r = requests.get(
-        f"{BASE_URL_OPENAQ}/sensors/{SENSOR_ID}/hours",
-        params={"limit": 24, "datetime_from": dt_from, "datetime_to": dt_to},
-        headers=HEADERS,
-        timeout=10,
-    )
-    values_24h: list[tuple[str, float]] = []
-    if r.ok:
-        for row in r.json().get("results", []):
-            val = row.get("value")
-            dt_local = row.get("period", {}).get("datetimeTo", {}).get("local")
-            if val is not None and dt_local is not None:
-                values_24h.append((dt_local, val))
-    if not values_24h:
-        values_24h = [("", pm25_latest)]  # fallback
-
-    return pm25_latest, values_24h
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 2 – METEOROLOGY  (Open-Meteo)
-# Docs: https://open-meteo.com/en/docs
-# Dùng HCMC_LAT, HCMC_LON, HOURLY_VARIABLES từ config
-# ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=300)
-def _fetch_meteo() -> dict:
-    """
-    Một request duy nhất lấy:
-      - current : tất cả biến trong HOURLY_VARIABLES trừ boundary_layer_height
-      - hourly  : boundary_layer_height
-                  (không có trong current → lấy từ hourly, match theo current["time"])
+def _fetch_weather_history(hours: int = 36) -> pd.DataFrame:
+    return OpenMeteoClient().fetch_weather_history(lookback_hours=hours)
 
-    Lưu ý: BASE_URL_OPENMETEO trong config trỏ đến archive API (dùng để train).
-    Ở đây dùng forecast endpoint để lấy current weather.
-    """
-    current_vars = [v for v in HOURLY_VARIABLES if v != "boundary_layer_height"]
 
-    r = requests.get(
-        "https://api.open-meteo.com/v1/forecast",
+@st.cache_data(ttl=300)
+def _fetch_current_weather() -> dict:
+    current_vars = [value for value in HOURLY_VARIABLES if value != "boundary_layer_height"]
+    response = requests.get(
+        OPENMETEO_FORECAST_URL,
         params={
-            "latitude":      HCMC_LAT,
-            "longitude":     HCMC_LON,
-            "current":       ",".join(current_vars),
-            "hourly":        "boundary_layer_height",
-            "timezone":      "Asia/Ho_Chi_Minh",
+            "latitude": HCMC_LAT,
+            "longitude": HCMC_LON,
+            "current": ",".join(current_vars),
+            "hourly": "boundary_layer_height",
+            "timezone": "Asia/Ho_Chi_Minh",
             "forecast_days": 1,
+            "wind_speed_unit": "ms",
         },
-        timeout=10,
+        timeout=20,
     )
-    r.raise_for_status()
-    data    = r.json()
-    current = data["current"]
+    response.raise_for_status()
+    payload = response.json()
+    current = payload["current"]
 
-    # current["time"] format: "2025-03-29T14:00" — khớp với hourly["time"]
-    hourly_times = data["hourly"]["time"]
-    hourly_blh   = data["hourly"]["boundary_layer_height"]
+    hourly_times = payload["hourly"]["time"]
+    hourly_blh = payload["hourly"]["boundary_layer_height"]
     current_time = current["time"]
-
-    blh = 0.0
     if current_time in hourly_times:
-        blh = hourly_blh[hourly_times.index(current_time)] or 0.0
-    elif hourly_blh:
-        blh = hourly_blh[0] or 0.0
-
-    current["boundary_layer_height"] = blh
+        current["boundary_layer_height"] = hourly_blh[hourly_times.index(current_time)] or 0.0
+    else:
+        current["boundary_layer_height"] = hourly_blh[0] if hourly_blh else 0.0
     return current
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# PUBLIC API
-# ══════════════════════════════════════════════════════════════════════════════
+@st.cache_data(ttl=300)
+def _fetch_air_quality() -> dict:
+    current_vars = list(AIR_QUALITY_VARS.values())
+    hourly_vars = list(AIR_QUALITY_VARS.values())
+    response = requests.get(
+        OPENMETEO_AIR_URL,
+        params={
+            "latitude": HCMC_LAT,
+            "longitude": HCMC_LON,
+            "current": ",".join(current_vars),
+            "hourly": ",".join(hourly_vars),
+            "timezone": "Asia/Ho_Chi_Minh",
+            "past_hours": 24,
+            "forecast_hours": 0,
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _build_current_pollutants(data: dict) -> tuple[dict[str, PollutantData], str]:
+    current = data.get("current", {})
+    current_units = data.get("current_units", {})
+    hourly = data.get("hourly", {})
+    updated_at = current.get("time", "")
+
+    pollutants: dict[str, PollutantData] = {}
+    for code, api_name in AIR_QUALITY_VARS.items():
+        series = hourly.get(api_name, []) or []
+        pollutants[code] = {
+            "code": code,
+            "label": DISPLAY_NAMES[code],
+            "value_1h": None if current.get(api_name) is None else round(float(current[api_name]), 1),
+            "unit": current_units.get(api_name, "µg/m³"),
+            "hourly_24h": [None if value is None else round(float(value), 1) for value in series[-24:]],
+            "updated_at": updated_at,
+        }
+    return pollutants, updated_at
+
+
+def _inject_openaq_pm25(
+    pollutants: dict[str, PollutantData],
+    pm_history: pd.DataFrame,
+) -> tuple[dict[str, PollutantData], str]:
+    updated = dict(pollutants)
+    latest_timestamp = pd.to_datetime(pm_history["datetime"]).max()
+    cutoff = latest_timestamp - pd.Timedelta(hours=23)
+    pm_values = pm_history[pd.to_datetime(pm_history["datetime"]) >= cutoff]["pm25_avg"].tolist()
+    updated_at = latest_timestamp.replace(tzinfo=UTC_TZ).astimezone(VN_TZ).strftime("%H:%M")
+    updated["pm25"] = {
+        "code": "pm25",
+        "label": DISPLAY_NAMES["pm25"],
+        "value_1h": None if pm_history.empty else round(float(pm_history.iloc[-1]["pm25_avg"]), 1),
+        "unit": "µg/m³",
+        "hourly_24h": [round(float(value), 1) for value in pm_values],
+        "updated_at": updated_at,
+    }
+    return updated, updated_at
+
+
+def _calculate_aqi(pollutants: dict[str, PollutantData]) -> VN_AQIResult:
+    payload = {
+        "pm25": {
+            "hourly_12h": list(reversed(pollutants["pm25"]["hourly_24h"][-12:])),
+            "value_1h": pollutants["pm25"]["value_1h"],
+        },
+        "pm10": {
+            "hourly_12h": list(reversed(pollutants["pm10"]["hourly_24h"][-12:])),
+            "value_1h": pollutants["pm10"]["value_1h"],
+        },
+        "o3": {"value_1h": pollutants["o3"]["value_1h"]},
+        "no2": {"value_1h": pollutants["no2"]["value_1h"]},
+        "so2": {"value_1h": pollutants["so2"]["value_1h"]},
+        "co": {"value_1h": pollutants["co"]["value_1h"]},
+    }
+    return calculate_vn_aqi_hourly(payload)
+
 
 @st.cache_data(ttl=300)
 def get_current_data() -> CurrentData:
-    meteo = _fetch_meteo()
+    fetched_at = datetime.now(VN_TZ).strftime("%H:%M")
+    pm_history = _fetch_openaq_pm25_history()
+    weather_history = _fetch_weather_history()
+    current_weather = _fetch_current_weather()
+    air_quality = _fetch_air_quality()
 
-    pm25_latest = 0.0
-    pm25_3h     = 0.0
-    pm25_24h    = 0.0
-    station     = f"{SENSOR_NAME} Station - TP.HCM"
+    pollutants, air_quality_updated_iso = _build_current_pollutants(air_quality)
+    pollutants, pm25_updated_at = _inject_openaq_pm25(pollutants, pm_history)
+    aqi = _calculate_aqi(pollutants)
 
-    try:
-        pm25_latest, values_24h = _fetch_pm25()
-        vals = [v for _, v in values_24h]
-        last3 = vals[-3:] if len(vals) >= 3 else vals
-        pm25_3h  = round(sum(last3) / len(last3), 1)
-        pm25_24h = round(sum(vals) / len(vals), 1)
-    except Exception as e:
-        station = f"{SENSOR_NAME} [OpenAQ lỗi: {e}]"
+    aligned_model_utc = min(
+        pd.to_datetime(pm_history["datetime"]).max().to_pydatetime(),
+        pd.to_datetime(weather_history["datetime"]).max().to_pydatetime(),
+    )
+    aligned_model_at = aligned_model_utc.replace(tzinfo=UTC_TZ).astimezone(VN_TZ).strftime("%H:%M")
+    weather_updated_at = datetime.fromisoformat(current_weather["time"]).strftime("%H:%M")
+    air_quality_updated_at = datetime.fromisoformat(air_quality_updated_iso).strftime("%H:%M") if air_quality_updated_iso else fetched_at
+
+    pm25_3h = _window_average(pm_history, 3)
+    pm25_24h = _window_average(pm_history, 24)
 
     return CurrentData(
-        pm25                  = round(pm25_latest, 1),
-        pm25_3h               = pm25_3h,
-        pm25_24h              = pm25_24h,
-        temp                  = meteo["temperature_2m"],
-        humidity              = int(meteo["relative_humidity_2m"]),
-        wind                  = meteo["wind_speed_10m"],
-        wind_dir              = meteo["wind_direction_10m"],
-        precipitation         = meteo["precipitation"],
-        pressure              = meteo["surface_pressure"],
-        boundary_layer_height = meteo["boundary_layer_height"],
-        updated_at            = datetime.now(VN_TZ).strftime("%H:%M"),
-        station               = station,
+        station=f"{SENSOR_NAME} Station - TP.HCM",
+        updated_at=fetched_at,
+        pm25_updated_at=pm25_updated_at,
+        weather_updated_at=weather_updated_at,
+        air_quality_updated_at=air_quality_updated_at,
+        aligned_model_at=aligned_model_at,
+        pollutants=pollutants,
+        pm25=pollutants["pm25"]["value_1h"],
+        pm10=pollutants["pm10"]["value_1h"],
+        o3=pollutants["o3"]["value_1h"],
+        no2=pollutants["no2"]["value_1h"],
+        so2=pollutants["so2"]["value_1h"],
+        co=pollutants["co"]["value_1h"],
+        pm25_3h=pm25_3h,
+        pm25_24h=pm25_24h,
+        temp=float(current_weather["temperature_2m"]),
+        humidity=int(current_weather["relative_humidity_2m"]),
+        wind=float(current_weather["wind_speed_10m"]),
+        wind_dir=float(current_weather["wind_direction_10m"]),
+        precipitation=float(current_weather["precipitation"]),
+        pressure=float(current_weather["surface_pressure"]),
+        boundary_layer_height=float(current_weather["boundary_layer_height"]),
+        aqi=aqi.aqi,
+        aqi_label=aqi.label,
+        aqi_color=aqi.bg_color,
+        aqi_text_color=aqi.text_color,
+        primary_pollutant=aqi.primary_pollutant,
     )
 
 
 @st.cache_data(ttl=300)
 def get_history_24h() -> list[HistoryPoint]:
-    try:
-        _, values_24h = _fetch_pm25()
+    pm_history = _fetch_openaq_pm25_history()
+    now_utc_hour = datetime.now(UTC_TZ).replace(minute=0, second=0, microsecond=0).replace(tzinfo=None)
+    start_utc_hour = now_utc_hour - pd.Timedelta(hours=23)
 
-        points = []
-        for dt_str, val in values_24h:
-            if dt_str:
-                dt = datetime.fromisoformat(dt_str)
-                label = dt.strftime("%H:%M")
-            else:
-                label = datetime.now(VN_TZ).strftime("%H:%M")
-            points.append(HistoryPoint(time=label, pm25=round(val, 1)))
+    frame = pd.DataFrame({"datetime": pd.date_range(start=start_utc_hour, end=now_utc_hour, freq="h")})
+    pm_history = pm_history.copy()
+    pm_history["datetime"] = pd.to_datetime(pm_history["datetime"], utc=False)
+    merged = frame.merge(pm_history, on="datetime", how="left")
 
-        return points
-
-    except Exception as e:
-        print("get_history_24h error:", e)
-        return []
-
-
-def get_forecast_6h() -> list[HistoryPoint]:
-    """
-    Dự báo PM2.5 6h tới.
-    TODO: thay bằng model ML khi sẵn sàng.
-    """
-    now    = datetime.now(VN_TZ)
-    series = _mock_pm25_series(6, base=get_current_data()["pm25"], noise=6.0)
-    return [
-        HistoryPoint(
-            time=(now + timedelta(hours=i + 1)).strftime("%H:%M"),
-            pm25=series[i],
+    history: list[HistoryPoint] = []
+    for _, row in merged.iterrows():
+        history.append(
+            HistoryPoint(
+                time=row["datetime"].replace(tzinfo=UTC_TZ).astimezone(VN_TZ).strftime("%H:%M"),
+                pm25=None if pd.isna(row["pm25_avg"]) else round(float(row["pm25_avg"]), 1),
+            )
         )
-        for i in range(6)
-    ]
+    return history

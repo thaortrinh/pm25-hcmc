@@ -1,120 +1,88 @@
-# PM2.5 Prediction - Ho Chi Minh City
+# PM2.5 Forecasting App - Ho Chi Minh City
 
-Forecasting PM2.5 air pollution levels in Ho Chi Minh City using sensor data from OpenAQ combined with historical weather data from Open-Meteo.
+This repository includes a deployable Streamlit inference pipeline for the CatBoost multi-horizon PM2.5 forecaster.
 
----
+## What the deployment does
 
-Data was collected from `2024-11-19` to `2026-03-23` 
+- Fetches recent PM2.5 sensor history from OpenAQ
+- Fetches recent weather history from Open-Meteo
+- Rebuilds the training-era engineered features used by `model/6h_pm.py`
+- Loads a CatBoost multi-output artifact from `model/multi_6h_weights/`
+- Generates a deployable CatBoost artifact if the repository only contains metrics and feature-importance files
+- Shows a Vietnamese prediction UI with historical vs forecast PM2.5 charting
 
-We build an end-to-end pipeline including:
+## Architecture
 
-- Data collection from APIs
-- Data preprocessing & feature engineering
-- Exploratory Data Analysis (EDA)
-- Machine learning modeling
-- Deploy model with Streamlit UI
+- `pages/2_Prediction.py`
+  - Vietnamese Streamlit UI for autofill, manual overrides, horizon selection, results, and charting
+- `src/services/openaq_client.py`
+  - Recent hourly PM2.5 history loader from OpenAQ
+- `src/services/openmeteo_client.py`
+  - Recent hourly weather history loader from Open-Meteo
+- `src/inference/feature_builder.py`
+  - Rebuilds the base processed features, applies saved scaling, then adds the extra 6-hour CatBoost features from `model/6h_pm.py`
+- `src/inference/artifact.py`
+  - Detects the best serialized CatBoost artifact and creates one if missing
+- `src/inference/predict.py`
+  - End-to-end forecast orchestration for the UI
+- `src/inference/train_artifact.py`
+  - CLI entry point to materialize the deployable CatBoost artifact ahead of time
 
----
+## Model artifact note
 
-## Table of Contents
+The repository currently contains:
 
-- [Overview](#overview)
-- [Project Structure](#project-structure)
-- [Installation](#installation)
-- [Data](#data)
+- `model/multi_6h_weights/metrics.json`
+- `model/multi_6h_weights/predictions.csv`
+- `model/multi_6h_weights/feature_importance.csv`
 
----
+It does not contain a serialized CatBoost model file. Because of that, the deployment code will generate:
 
-## Overview
+- `model/multi_6h_weights/catboost_multi_horizon_deployable.cbm`
+- `model/multi_6h_weights/deployment_metadata.json`
 
-This project builds an end-to-end pipeline to collect, process, and predict PM2.5 concentrations in Ho Chi Minh City. The goal is to train a forecasting model using meteorological features (temperature, humidity, wind speed, etc.) alongside historical air quality readings.
-
-**Data sources:**
-
-This project using sensor data from OpenAQ combined with historical weather data from Open-Meteo.
-
-- **PM2.5:** [OpenAQ API](https://openaq.org/) - sensor readings from HCMC monitoring stations
-- **Weather:** [Open-Meteo API](https://open-meteo.com/) - hourly historical weather data (free, no API key required)
-
----
-
-# Project Structure
-
-```bash
-pm25-prediction/
-│
-├── data/
-│   ├── raw/
-│   │   ├── hcmc_stations.csv
-│   │   ├── pm25_sensor_11357424.csv
-│   │   └── weather_openmeteo.csv
-│   │
-│   └── processed/
-│
-├── notebooks/
-│
-├── src/
-│   ├── data/
-│   │   ├── collect_openaq.py
-│   │   ├── collect_openmeteo.py
-│   │   ├── merge.py
-│   │
-│   └── __init__.py
-│
-├── config.py
-├── .env
-├── requirements.txt
-└── README.md
-```
-
-
----
+The deployment artifact keeps the CatBoost direct multi-horizon setup from `model/6h_pm.py` and excludes `target_next_hour`, which is a future-leaking helper column and should not be used at inference time.
 
 ## Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/thaortrinh/pm25-hcmc.git
-cd pm25-prediction
-
-# Create a virtual environment
 python -m venv venv
-
-source venv/bin/activate        # Linux/macOS
-venv\Scripts\activate           # Windows
-
-# Install dependencies
+venv\Scripts\activate
 pip install -r requirements.txt
+copy .env.example .env
 ```
 
-**Configure `.env`** (if using an OpenAQ API key):
+Then add your OpenAQ key to `.env`:
 
 ```env
-OPENAQ_API_KEY=your_api_key
+OPENAQ_API_KEY=your_openaq_api_key
 ```
 
----
+## Run locally
 
-## Data
-
-I've already fetch raw data and put them in folder `data/`:
-| File | Description | Source |
-|------|-------------|--------|
-| `hcmc_stations.csv` | Station metadata (ID, coordinates, name) | OpenAQ |
-| `pm25_sensor_11357424.csv` | Hourly PM2.5 time series (μg/m³) | OpenAQ |
-| `weather_openmeteo.csv` | Temperature, humidity, wind speed, precipitation, etc. | Open-Meteo |
-
----
-Or, you can **run scripts in order:**
+Optional prebuild step:
 
 ```bash
-# 1. Fetch station list & PM2.5 readings
-python src/data/collect_openaq.py
-
-# 2. Fetch corresponding weather data
-python src/data/collect_openmeteo.py
+python -m src.inference.train_artifact
 ```
 
-Outputs are saved to `data/raw/`
+Start the app:
 
----
+```bash
+streamlit run App.py
+```
+
+## Data files already in the repository
+
+| File | Purpose |
+|------|---------|
+| `data/raw/pm25_sensor_11357424.csv` | Raw PM2.5 hourly observations |
+| `data/raw/weather_openmeteo.csv` | Raw hourly weather history |
+| `data/processed/pm25_processed_data.csv` | Processed training-era feature reference |
+| `model/6h_pm.py` | Multi-horizon CatBoost training script |
+
+## Inference assumptions
+
+- Time alignment stays in UTC for feature generation because the raw training pipeline also used UTC-aligned timestamps.
+- `time_of_the_day`, rush-hour windows, dew-point approximation, and base scaling were reconstructed from repository artifacts and validated against `data/processed/pm25_processed_data.csv`.
+- `special_holidays` uses a small inferred historical override set plus Vietnamese holidays when the `holidays` package is available.

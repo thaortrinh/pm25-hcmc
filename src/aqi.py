@@ -1,120 +1,212 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 
-# ── Breakpoints US EPA (PM2.5, 24h average) ──────────────────────────────────
-# (C_low, C_high, I_low, I_high, label, hex_color, text_color)
-_BREAKPOINTS = [
-    (0.0,   12.0,   0,   50,  "Good",            "#00e400", "#000000"),
-    (12.1,  35.4,  51,  100,  "Moderate",         "#ffff00", "#000000"),
-    (35.5,  55.4, 101,  150,  "Unhealthy for SG", "#ff7e00", "#000000"),
-    (55.5, 150.4, 151,  200,  "Unhealthy",        "#ff0000", "#ffffff"),
-    (150.5, 250.4, 201, 300,  "Very Unhealthy",   "#8f3f97", "#ffffff"),
-    (250.5, 500.4, 301, 500,  "Hazardous",        "#7e0023", "#ffffff"),
+
+AQI_LEVELS = [
+    (0, 50, "Tốt", "#00e400", "#000000"),
+    (51, 100, "Trung bình", "#ffff00", "#000000"),
+    (101, 150, "Kém", "#ff7e00", "#000000"),
+    (151, 200, "Xấu", "#ff0000", "#ffffff"),
+    (201, 300, "Rất xấu", "#8f3f97", "#ffffff"),
+    (301, 500, "Nguy hại", "#7e0023", "#ffffff"),
 ]
 
 
-@dataclass
+AQI_BREAKPOINTS = {
+    "o3_1h": [0, 160, 200, 300, 400, 800, 1000, 1200],
+    "o3_8h": [0, 100, 120, 170, 210, 400],
+    "co": [0, 10000, 30000, 45000, 60000, 90000, 120000, 150000],
+    "so2": [0, 125, 350, 550, 800, 1600, 2100, 2630],
+    "no2": [0, 100, 200, 700, 1200, 2350, 3100, 3850],
+    "pm10": [0, 50, 150, 250, 350, 420, 500, 600],
+    "pm25": [0, 25, 50, 80, 150, 250, 350, 500],
+}
+
+
+GAS_MOLECULAR_WEIGHTS = {
+    "o3": 48.0,
+    "no2": 46.0,
+    "so2": 64.066,
+    "co": 28.01,
+}
+
+
+@dataclass(frozen=True)
 class AQIResult:
-    pm25: float
+    concentration: float
     aqi: int
     label: str
-    bg_color: str       # hex background
-    text_color: str     # hex text (đảm bảo contrast)
+    bg_color: str
+    text_color: str
 
 
-def pm25_to_aqi(pm25: float) -> AQIResult:
-    """
-    Chuyển PM2.5 (μg/m³) sang AQI và thông tin hiển thị.
-    Clamp về 0 nếu âm, clamp về 500 nếu vượt ngưỡng.
-    """
-    pm25 = max(0.0, pm25)
-
-    for c_low, c_high, i_low, i_high, label, bg, text in _BREAKPOINTS:
-        if pm25 <= c_high:
-            # Linear interpolation
-            aqi = round(
-                (i_high - i_low) / (c_high - c_low) * (pm25 - c_low) + i_low
-            )
-            return AQIResult(pm25=pm25, aqi=aqi, label=label,
-                             bg_color=bg, text_color=text)
-
-    # Vượt 500 → Hazardous max
-    *_, label, bg, text = _BREAKPOINTS[-1]
-    return AQIResult(pm25=pm25, aqi=500, label=label,
-                     bg_color=bg, text_color=text)
+@dataclass(frozen=True)
+class PollutantAQI:
+    pollutant: str
+    concentration: float
+    aqi: int
+    label: str
+    bg_color: str
+    text_color: str
+    basis: str
 
 
-def aqi_badge_html(result: AQIResult, size: str = "normal") -> str:
-    """
-    Trả về HTML string cho badge AQI màu.
-    size = "normal" | "large"
-    """
-    font_size = "1.1rem" if size == "large" else "0.85rem"
-    padding   = "6px 14px" if size == "large" else "3px 10px"
-    return (
-        f'<span style="'
-        f'background:{result.bg_color};'
-        f'color:{result.text_color};'
-        f'border-radius:999px;'
-        f'padding:{padding};'
-        f'font-size:{font_size};'
-        f'font-weight:600;'
-        f'">{result.label} (AQI {result.aqi})</span>'
+@dataclass(frozen=True)
+class VN_AQIResult:
+    aqi: int | None
+    label: str
+    bg_color: str
+    text_color: str
+    primary_pollutant: str | None
+    sub_indices: dict[str, PollutantAQI]
+
+
+def _category_for_aqi(aqi: int) -> tuple[str, str, str]:
+    for lower, upper, label, bg, text in AQI_LEVELS:
+        if lower <= aqi <= upper:
+            return label, bg, text
+    label, bg, text = AQI_LEVELS[-1][2:]
+    return label, bg, text
+
+
+def _interpolate_index(value: float, breakpoints: list[float]) -> int:
+    if value <= breakpoints[0]:
+        return 0
+
+    for idx in range(len(breakpoints) - 1):
+        bp_low = breakpoints[idx]
+        bp_high = breakpoints[idx + 1]
+        i_low = 0 if idx == 0 else AQI_LEVELS[idx - 1][1]
+        i_high = AQI_LEVELS[idx][1]
+
+        if value <= bp_high:
+            aqi = round((i_high - i_low) / (bp_high - bp_low) * (value - bp_low) + i_low)
+            return max(0, min(aqi, 500))
+
+    return 500
+
+
+def _make_result(value: float, aqi: int) -> AQIResult:
+    label, bg, text = _category_for_aqi(aqi)
+    return AQIResult(
+        concentration=round(value, 1),
+        aqi=aqi,
+        label=label,
+        bg_color=bg,
+        text_color=text,
     )
 
 
-def aqi_scale_html(current_aqi: int) -> str:
+def compute_nowcast(hourly_values: list[float | None]) -> float | None:
     """
-    Render thanh AQI color scale dạng HTML,
-    với marker "▼ You are here" tại vị trí current_aqi.
+    Vietnam AQI requires PM2.5 and PM10 hourly AQI to use a 12-hour Nowcast.
+    The weighting follows the standard Cmin/Cmax approach, bounded to 0.5.
     """
-    segments = [
-        (50,  "#00e400", "#000", "Good"),
-        (100, "#ffff00", "#000", "Moderate"),
-        (150, "#ff7e00", "#000", "USG"),
-        (200, "#ff0000", "#fff", "Unhealthy"),
-        (300, "#8f3f97", "#fff", "Very"),
-        (500, "#7e0023", "#fff", "Hazardous"),
-    ]
+    if len(hourly_values) < 3:
+        return None
 
-    total = 500
-    bars = ""
-    marker_left = min(max(current_aqi / total * 100, 0), 100)
+    if sum(value is not None for value in hourly_values[:3]) < 2:
+        return None
 
-    for upper, bg, fg, lbl in segments:
-        width = (upper / total) * 100  # width % so với 500 range
-        bars += (
-            f'<div style="flex:{upper};background:{bg};'
-            f'color:{fg};font-size:0.65rem;'
-            f'display:flex;align-items:center;justify-content:center;">'
-            f'{lbl}</div>'
+    valid = [value for value in hourly_values[:12] if value is not None]
+    if not valid:
+        return None
+
+    c_min = min(valid)
+    c_max = max(valid)
+    if c_max <= 0:
+        return 0.0
+
+    weight_star = c_min / c_max
+    weight = max(weight_star, 0.5)
+
+    numerator = 0.0
+    denominator = 0.0
+    for idx, value in enumerate(hourly_values[:12]):
+        if value is None:
+            continue
+        factor = weight ** idx
+        numerator += value * factor
+        denominator += factor
+
+    if denominator == 0:
+        return None
+    return numerator / denominator
+
+
+def pollutant_to_aqi(
+    pollutant: str,
+    concentration: float,
+    *,
+    basis: str | None = None,
+) -> PollutantAQI:
+    metric = basis or pollutant
+    aqi = _interpolate_index(concentration, AQI_BREAKPOINTS[metric])
+    label, bg, text = _category_for_aqi(aqi)
+    return PollutantAQI(
+        pollutant=pollutant,
+        concentration=round(concentration, 1),
+        aqi=aqi,
+        label=label,
+        bg_color=bg,
+        text_color=text,
+        basis=metric,
+    )
+
+
+def calculate_vn_aqi_hourly(pollutants: dict[str, dict]) -> VN_AQIResult:
+    sub_indices: dict[str, PollutantAQI] = {}
+
+    pm_available = False
+
+    for pollutant in ("pm25", "pm10"):
+        payload = pollutants.get(pollutant, {})
+        hourly_values = payload.get("hourly_12h", [])
+        nowcast = compute_nowcast(hourly_values)
+        if nowcast is None:
+            continue
+        sub_indices[pollutant] = pollutant_to_aqi(pollutant, nowcast)
+        pm_available = True
+
+    o3_payload = pollutants.get("o3", {})
+    o3_value = o3_payload.get("value_1h")
+    if o3_value is not None:
+        sub_indices["o3"] = pollutant_to_aqi("o3", o3_value, basis="o3_1h")
+
+    for pollutant in ("no2", "so2", "co"):
+        payload = pollutants.get(pollutant, {})
+        value = payload.get("value_1h")
+        if value is None:
+            continue
+        sub_indices[pollutant] = pollutant_to_aqi(pollutant, value)
+
+    if not pm_available or not sub_indices:
+        return VN_AQIResult(
+            aqi=None,
+            label="Không có dữ liệu",
+            bg_color="#6b7280",
+            text_color="#ffffff",
+            primary_pollutant=None,
+            sub_indices=sub_indices,
         )
 
-    html = f"""
-    <div style="position:relative;margin-top:8px;">
-      <div style="display:flex;height:28px;border-radius:6px;overflow:hidden;">
-        {bars}
-      </div>
-      <div style="
-        position:absolute;
-        left:{marker_left:.1f}%;
-        top:-18px;
-        transform:translateX(-50%);
-        font-size:0.75rem;
-        white-space:nowrap;
-        font-weight:700;
-      ">▼ {current_aqi}</div>
-    </div>
-    """
-    return html
+    primary = max(sub_indices.values(), key=lambda item: item.aqi)
+    return VN_AQIResult(
+        aqi=primary.aqi,
+        label=primary.label,
+        bg_color=primary.bg_color,
+        text_color=primary.text_color,
+        primary_pollutant=primary.pollutant,
+        sub_indices=sub_indices,
+    )
 
 
-# ── Helper nhanh ─────────────────────────────────────────────────────────────
+def pm25_to_aqi(pm25: float) -> AQIResult:
+    pm25 = max(0.0, pm25)
+    aqi = _interpolate_index(pm25, AQI_BREAKPOINTS["pm25"])
+    return _make_result(pm25, aqi)
 
-def get_color(pm25: float) -> str:
-    """Trả về hex color ứng với mức PM2.5."""
-    return pm25_to_aqi(pm25).bg_color
 
-
-def get_label(pm25: float) -> str:
-    """Trả về label text ứng với mức PM2.5."""
-    return pm25_to_aqi(pm25).label
+def aqi_scale_segments() -> list[tuple[int, str, str, str]]:
+    return [(upper, bg, text, label) for _, upper, label, bg, text in AQI_LEVELS]

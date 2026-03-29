@@ -1,219 +1,566 @@
-# pages/2_Prediction.py
-import streamlit as st
-import pandas as pd
-from datetime import datetime, timedelta
+from __future__ import annotations
+
+from datetime import timedelta
 from zoneinfo import ZoneInfo
 
-from src.aqi import pm25_to_aqi
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
 from src.api import get_current_data
-from src.model import predict_multi_horizon
+from src.aqi import pm25_to_aqi
+from src.inference.feature_builder import merge_pm_and_weather
+from src.inference.predict import ForecastBundle, fetch_recent_inputs, run_forecast, summarize_alignment
+from src.ui import inject_base_css
 
 
-# ─── CSS ─────────────────────────────────────────────────────────────────────
+VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+
 
 def inject_css():
-    st.markdown("""
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+    inject_base_css(
+        """
+        .page-hero {
+          background: linear-gradient(135deg, rgba(17,24,39,0.06), rgba(59,130,246,0.10));
+          border: 1px solid var(--border-color);
+          border-radius: 22px;
+          padding: 22px 24px;
+          margin-bottom: 20px;
+          box-shadow: 0 12px 30px var(--shadow-color);
+        }
 
-      html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
-      #MainMenu, footer, header  { visibility: hidden; }
+        .page-hero h1 {
+          font-size: 1.6rem;
+          font-weight: 700;
+          margin: 0;
+        }
 
-      .stApp { background: #f5f6fa; color: #111827; }
+        .page-hero p {
+          margin: 8px 0 0 0;
+          color: var(--text-muted);
+          max-width: 760px;
+        }
 
-      .block-title {
-        font-size: 0.72rem; font-weight: 700;
-        letter-spacing: 0.12em; text-transform: uppercase;
-        color: #9ca3af; margin-bottom: 12px;
-      }
-      .result-card {
-        background: #ffffff; border: 1px solid #e2e5ea;
-        border-radius: 12px; padding: 16px 12px; text-align: center;
-        transition: box-shadow 0.15s;
-      }
-      .result-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
-      .result-card .hour  { font-size: 0.75rem; color: #9ca3af; margin-bottom: 4px; font-family: 'Space Mono', monospace; }
-      .result-card .val   { font-size: 1.5rem; font-weight: 700; color: #111827; margin: 4px 0; font-family: 'Space Mono', monospace; }
-      .result-card .unit  { font-size: 0.65rem; color: #9ca3af; }
+        .block-title {
+          font-size: 0.75rem;
+          font-weight: 700;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          color: var(--text-faint);
+          margin-bottom: 12px;
+        }
 
-      .result-card-large {
-        background: #ffffff; border: 2px solid #e2e5ea;
-        border-radius: 16px; padding: 40px 24px; text-align: center;
-        box-shadow: 0 4px 24px rgba(0,0,0,0.06);
-      }
-      .result-card-large .val { font-size: 3rem; font-weight: 800; color: #111827; font-family: 'Space Mono', monospace; }
+        .input-panel,
+        .result-card,
+        .result-card-large,
+        .suggestion-box,
+        .status-chip {
+          background: linear-gradient(135deg, var(--card-bg) 0%, var(--card-bg-alt) 100%);
+          border: 1px solid var(--border-color);
+          box-shadow: 0 10px 30px var(--shadow-color);
+        }
 
-      .aqi-badge {
-        display: inline-block; padding: 3px 12px;
-        border-radius: 999px; font-size: 0.75rem; font-weight: 700;
-      }
-      .aqi-badge-large {
-        display: inline-block; padding: 6px 18px;
-        border-radius: 999px; font-size: 1rem; font-weight: 700;
-        margin-top: 12px;
-      }
-      .suggestion-box {
-        background: #ffffff; border-left: 4px solid #7c6af7;
-        border-radius: 8px; padding: 14px 18px; margin-top: 16px;
-        font-size: 0.95rem; color: #374151;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-      }
-    </style>
-    """, unsafe_allow_html=True)
+        .input-panel {
+          border-radius: 18px;
+          padding: 18px 18px 8px 18px;
+          margin-bottom: 18px;
+        }
+
+        .result-card {
+          border-radius: 14px;
+          padding: 18px 12px;
+          text-align: center;
+        }
+
+        .result-card-large {
+          border-radius: 18px;
+          padding: 40px 24px;
+          text-align: center;
+        }
+
+        .hour,
+        .unit {
+          color: var(--text-faint);
+        }
+
+        .val {
+          font-family: 'Space Mono', monospace;
+          font-weight: 800;
+          color: var(--text-primary);
+        }
+
+        .result-card .val {
+          font-size: 1.55rem;
+        }
+
+        .result-card-large .val {
+          font-size: 3rem;
+        }
+
+        .aqi-badge,
+        .aqi-badge-large {
+          display: inline-block;
+          border-radius: 999px;
+          font-weight: 700;
+        }
+
+        .aqi-badge {
+          padding: 4px 10px;
+          font-size: 0.72rem;
+        }
+
+        .aqi-badge-large {
+          padding: 6px 18px;
+          font-size: 0.95rem;
+          margin-top: 12px;
+        }
+
+        .suggestion-box {
+          border-left: 4px solid var(--accent-color);
+          border-radius: 10px;
+          padding: 14px 18px;
+          margin-top: 16px;
+          color: var(--text-primary);
+        }
+
+        .status-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          border-radius: 999px;
+          padding: 8px 12px;
+          font-size: 0.78rem;
+          color: var(--text-muted);
+          margin-top: 14px;
+        }
+
+        .status-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 999px;
+          background: #ef4444;
+        }
+        """
+    )
 
 
-# ─── Render helpers ──────────────────────────────────────────────────────────
-
-def render_aqi_badge(label: str, bg: str, text: str,
-                     css_class: str = "aqi-badge") -> str:
+def render_aqi_badge(label: str, bg: str, text: str, css_class: str = "aqi-badge") -> str:
     return f'<span class="{css_class}" style="background:{bg};color:{text}">{label}</span>'
 
 
 def render_result_cards(predictions: list[float], future_hours: list[str]):
-    """Render 1 ô lớn hoặc nhiều ô nhỏ tuỳ horizon."""
     horizon = len(predictions)
-
     if horizon == 1:
         info = pm25_to_aqi(predictions[0])
-        badge = render_aqi_badge(f"{info['label']} · AQI {info['aqi']}",
-                                 info["bg"], info["text"], "aqi-badge-large")
-        st.markdown(f"""
-        <div class="result-card-large">
-          <div style="font-size:0.85rem;color:#9ca3af;margin-bottom:8px;">
-            Dự báo lúc {future_hours[0]}
-          </div>
-          <div class="val" style="color:{info['bg']};">
-            {predictions[0]:.1f} <span style="font-size:1.4rem;font-weight:400;color:#6b7280;">μg/m³</span>
-          </div>
-          {badge}
-        </div>
-        """, unsafe_allow_html=True)
+        badge = render_aqi_badge(
+            f"{info.label} · AQI {info.aqi}",
+            info.bg_color,
+            info.text_color,
+            "aqi-badge-large",
+        )
+        st.markdown(
+            f"""
+            <div class="result-card-large">
+              <div class="hour" style="font-size:0.85rem;margin-bottom:8px;">
+                Dự báo lúc {future_hours[0]}
+              </div>
+              <div class="val" style="color:{info.bg_color};">
+                {predictions[0]:.1f}
+                <span style="font-size:1.1rem;font-weight:500;color:var(--text-muted);">µg/m³</span>
+              </div>
+              {badge}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
 
-    else:
-        cols = st.columns(horizon)
-        for i, (col, pm25_val, hour_str) in enumerate(zip(cols, predictions, future_hours)):
-            info  = pm25_to_aqi(pm25_val)
-            badge = render_aqi_badge(info["label"], info["bg"], info["text"])
-            with col:
-                st.markdown(f"""
+    cols = st.columns(horizon)
+    for index, (column, pm25_value, hour_str) in enumerate(zip(cols, predictions, future_hours), start=1):
+        info = pm25_to_aqi(pm25_value)
+        badge = render_aqi_badge(info.label, info.bg_color, info.text_color)
+        with column:
+            st.markdown(
+                f"""
                 <div class="result-card">
-                  <div class="hour">t+{i+1}h · {hour_str}</div>
-                  <div class="val" style="color:{info['bg']};">{pm25_val:.1f}</div>
-                  <div class="unit">μg/m³</div>
-                  <div style="margin-top:6px;">{badge}</div>
+                  <div class="hour" style="font-family:'Space Mono', monospace;font-size:0.75rem;margin-bottom:4px;">
+                    t+{index}h · {hour_str}
+                  </div>
+                  <div class="val" style="color:{info.bg_color};">{pm25_value:.1f}</div>
+                  <div class="unit">µg/m³</div>
+                  <div style="margin-top:8px;">{badge}</div>
                 </div>
-                """, unsafe_allow_html=True)
-
-
-def render_forecast_chart(predictions: list[float], future_hours: list[str]):
-    chart_df = pd.DataFrame({
-        "Giờ": future_hours,
-        "PM2.5 (μg/m³)": predictions,
-    }).set_index("Giờ")
-    st.line_chart(chart_df, height=200)
+                """,
+                unsafe_allow_html=True,
+            )
 
 
 def render_suggestion(predictions: list[float], hours: list[str]):
-    max_val  = max(predictions)
-    min_val  = min(predictions)
+    max_val = max(predictions)
+    min_val = min(predictions)
     max_hour = hours[predictions.index(max_val)]
     min_hour = hours[predictions.index(min_val)]
-    trend    = predictions[-1] - predictions[0]
+    trend = predictions[-1] - predictions[0]
 
     if max_val > 150:
-        level = f"⚠️ PM2.5 dự kiến đạt **{max_val:.1f} μg/m³** lúc {max_hour} – mức **Không lành mạnh**, hạn chế ra ngoài."
-    elif max_val > 55:
-        level = f"🟠 PM2.5 có thể lên **{max_val:.1f} μg/m³** lúc {max_hour} – nhóm nhạy cảm nên hạn chế hoạt động ngoài trời."
+        level = f"PM2.5 có thể đạt **{max_val:.1f} µg/m³** lúc {max_hour}, mức ô nhiễm cao."
+    elif max_val > 80:
+        level = f"PM2.5 có thể tăng lên **{max_val:.1f} µg/m³** lúc {max_hour}, nên theo dõi kỹ."
     elif max_val > 35:
-        level = f"🟡 Chất lượng không khí trung bình, PM2.5 cao nhất **{max_val:.1f} μg/m³** lúc {max_hour}."
+        level = f"Không khí ở mức trung bình, đỉnh dự báo là **{max_val:.1f} µg/m³** lúc {max_hour}."
     else:
-        level = f"🟢 Chất lượng không khí tốt, PM2.5 dưới **{max_val:.1f} μg/m³** trong {len(predictions)} giờ tới."
+        level = f"Không khí tương đối tốt, PM2.5 giữ dưới **{max_val:.1f} µg/m³** trong {len(predictions)} giờ tới."
 
     if trend > 10:
-        trend_msg = f" Xu hướng **tăng dần** – nên ra ngoài trước {hours[0]}."
+        trend_msg = f" Xu hướng đang **tăng dần**; nếu cần ra ngoài, nên ưu tiên trước {hours[0]}."
     elif trend < -10:
-        trend_msg = f" Dự kiến **cải thiện** sau {min_hour}."
+        trend_msg = f" Dự báo **cải thiện** rõ sau {min_hour}."
     else:
-        trend_msg = " Mức độ ô nhiễm **ổn định** trong khung giờ này."
+        trend_msg = " Mức ô nhiễm nhìn chung **ổn định** trong khung giờ này."
 
-    st.markdown(f'<div class="suggestion-box">💬 {level}{trend_msg}</div>',
-                unsafe_allow_html=True)
+    st.markdown(f'<div class="suggestion-box">{level}{trend_msg}</div>', unsafe_allow_html=True)
 
 
-# ─── Main ────────────────────────────────────────────────────────────────────
+def render_live_chart(bundle: ForecastBundle, horizon: int):
+    history = bundle.merged_history[["datetime", "pm25_avg"]].dropna().copy()
+    history["datetime"] = pd.to_datetime(history["datetime"])
+    history["datetime_vn"] = history["datetime"].dt.tz_localize("UTC").dt.tz_convert(VN_TZ).dt.tz_localize(None)
+
+    latest_utc = history["datetime"].max().to_pydatetime()
+    latest_vn = latest_utc.replace(tzinfo=ZoneInfo("UTC")).astimezone(VN_TZ).replace(tzinfo=None)
+    forecast_df = pd.DataFrame(
+        {
+            "datetime_vn": bundle.prediction_times_vn[:horizon],
+            "pm25_avg": bundle.predictions[:horizon],
+        }
+    )
+
+    chart_end = forecast_df["datetime_vn"].max()
+    chart_start = chart_end - timedelta(hours=12)
+    history_window = history[history["datetime_vn"] >= chart_start].copy()
+
+    figure = go.Figure()
+    figure.add_trace(
+        go.Scatter(
+            x=history_window["datetime_vn"],
+            y=history_window["pm25_avg"],
+            mode="lines+markers",
+            name="PM2.5 lịch sử",
+            line=dict(color="#2563eb", width=3),
+            marker=dict(color="#2563eb", size=7),
+            hovertemplate="%{x|%H:%M %d/%m}<br>PM2.5: %{y:.1f} µg/m³<extra></extra>",
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=[latest_vn] + forecast_df["datetime_vn"].tolist(),
+            y=[history_window.iloc[-1]["pm25_avg"]] + forecast_df["pm25_avg"].tolist(),
+            mode="lines+markers",
+            name="PM2.5 dự báo",
+            line=dict(color="#dc2626", width=3),
+            marker=dict(color="#dc2626", size=8),
+            hovertemplate="%{x|%H:%M %d/%m}<br>PM2.5: %{y:.1f} µg/m³<extra></extra>",
+        )
+    )
+    figure.add_vline(
+        x=latest_vn,
+        line_width=2,
+        line_dash="dash",
+        line_color="#94a3b8",
+    )
+    figure.add_vrect(
+        x0=latest_vn,
+        x1=chart_end,
+        fillcolor="rgba(220, 38, 38, 0.08)",
+        line_width=0,
+    )
+    figure.add_annotation(
+        x=latest_vn,
+        y=1.05,
+        xref="x",
+        yref="paper",
+        text="Hiện tại",
+        showarrow=False,
+        font=dict(size=11, color="#94a3b8"),
+    )
+    figure.add_annotation(
+        x=forecast_df["datetime_vn"].iloc[-1],
+        y=1.05,
+        xref="x",
+        yref="paper",
+        text="Vùng dự báo",
+        xanchor="right",
+        showarrow=False,
+        font=dict(size=11, color="#dc2626"),
+    )
+    figure.update_layout(
+        height=380,
+        margin=dict(l=12, r=12, t=20, b=12),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        xaxis=dict(title="Thời gian", showgrid=False, range=[chart_start, chart_end]),
+        yaxis=dict(title="PM2.5 (µg/m³)", gridcolor="rgba(148, 163, 184, 0.18)", zeroline=False),
+        hovermode="x unified",
+    )
+    st.plotly_chart(figure, use_container_width=True)
+
+
+def _store_autofill_payload():
+    pm_history, weather_history = fetch_recent_inputs(lookback_hours=72)
+    aligned_history = merge_pm_and_weather(pm_history, weather_history)
+    current_snapshot = get_current_data()
+    override_defaults = {
+        "pm25_avg": float(current_snapshot["pm25"] or 0.0),
+        "coverage_pct": 100.0,
+        "temperature_2m": float(current_snapshot["temp"]),
+        "relative_humidity_2m": float(current_snapshot["humidity"]),
+        "precipitation": float(current_snapshot["precipitation"]),
+        "wind_speed_10m": float(current_snapshot["wind"]),
+        "wind_direction_10m": float(current_snapshot["wind_dir"]),
+        "surface_pressure": float(current_snapshot["pressure"]),
+        "boundary_layer_height": float(current_snapshot["boundary_layer_height"]),
+    }
+    st.session_state["prediction_payload"] = {
+        "pm_history": pm_history.reset_index(drop=True),
+        "weather_history": weather_history.reset_index(drop=True),
+        "aligned_history": aligned_history.reset_index(drop=True),
+        "current_snapshot": current_snapshot,
+        "override_defaults": override_defaults,
+    }
+
+
+def render_input_summary():
+    payload = st.session_state.get("prediction_payload")
+    if not payload:
+        st.info("Nhấn “Tự động điền từ API” để nạp dữ liệu PM2.5 và thời tiết mới nhất.")
+        return
+
+    pm_history = payload["pm_history"].copy()
+    weather_history = payload["weather_history"].copy()
+    aligned_history = payload["aligned_history"].copy()
+    current_snapshot = payload["current_snapshot"]
+    alignment = summarize_alignment(pm_history, weather_history)
+    latest_aligned = aligned_history.iloc[-1]
+    latest_label = pd.to_datetime(latest_aligned["datetime"]).tz_localize("UTC").tz_convert(VN_TZ).strftime("%H:%M %d/%m/%Y")
+    st.caption(
+        f"PM2.5 OpenAQ mới nhất: {current_snapshot['pm25_updated_at']} · Thời tiết Open-Meteo mới nhất: {current_snapshot['weather_updated_at']} · Mốc đồng bộ dùng cho mô hình: {latest_label}"
+    )
+    if alignment["latest_pm"] and alignment["latest_weather"] and alignment["latest_common"]:
+        common_local = pd.Timestamp(alignment["latest_common"]).tz_localize("UTC").tz_convert(VN_TZ).strftime("%H:%M")
+        st.caption(
+            f"Nguồn hiện tại hiển thị theo thời gian thực của từng API. Nếu bạn không chỉnh tay gì, lần dự báo sẽ dùng lịch sử đồng bộ đến {common_local}."
+        )
+
+    metric_cols = st.columns(4)
+    metric_items = [
+        ("PM2.5 hiện tại", f"{float(current_snapshot['pm25'] or 0.0):.1f} µg/m³"),
+        ("Nhiệt độ", f"{float(current_snapshot['temp']):.1f} °C"),
+        ("Độ ẩm", f"{float(current_snapshot['humidity']):.0f} %"),
+        ("Tốc độ gió", f"{float(current_snapshot['wind']):.1f} m/s"),
+    ]
+    for column, (label, value) in zip(metric_cols, metric_items):
+        with column:
+            st.metric(label, value)
+
+    st.caption("12 giờ lịch sử đồng bộ dưới đây là phần nền mà mô hình dùng để dựng đặc trưng trước khi suy luận.")
+    preview = (
+        aligned_history.tail(12)
+        .assign(
+            datetime=lambda df: pd.to_datetime(df["datetime"]).dt.tz_localize("UTC").dt.tz_convert(VN_TZ).dt.strftime("%H:%M")
+        )
+        .rename(columns={"datetime": "Giờ", "pm25_avg": "PM2.5", "coverage_pct": "Độ phủ (%)"})
+    )
+    st.dataframe(preview, use_container_width=True, hide_index=True)
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.number_input(
+            "PM2.5 hiện tại (µg/m³)",
+            min_value=0.0,
+            max_value=500.0,
+            step=0.1,
+            key="override_pm25_avg",
+            value=float(current_snapshot["pm25"] or 0.0),
+        )
+        st.number_input(
+            "Độ phủ cảm biến (%)",
+            min_value=0.0,
+            max_value=100.0,
+            step=1.0,
+            key="override_coverage_pct",
+            value=float(payload["override_defaults"]["coverage_pct"]),
+        )
+        st.number_input(
+            "Nhiệt độ (°C)",
+            min_value=-10.0,
+            max_value=50.0,
+            step=0.1,
+            key="override_temperature_2m",
+            value=float(current_snapshot["temp"]),
+        )
+    with col2:
+        st.number_input(
+            "Độ ẩm (%)",
+            min_value=0.0,
+            max_value=100.0,
+            step=1.0,
+            key="override_relative_humidity_2m",
+            value=float(current_snapshot["humidity"]),
+        )
+        st.number_input(
+            "Lượng mưa (mm)",
+            min_value=0.0,
+            max_value=200.0,
+            step=0.1,
+            key="override_precipitation",
+            value=float(current_snapshot["precipitation"]),
+        )
+        st.number_input(
+            "Tốc độ gió (m/s)",
+            min_value=0.0,
+            max_value=50.0,
+            step=0.1,
+            key="override_wind_speed_10m",
+            value=float(current_snapshot["wind"]),
+        )
+    with col3:
+        st.number_input(
+            "Hướng gió (°)",
+            min_value=0.0,
+            max_value=360.0,
+            step=1.0,
+            key="override_wind_direction_10m",
+            value=float(current_snapshot["wind_dir"]),
+        )
+        st.number_input(
+            "Áp suất bề mặt (hPa)",
+            min_value=900.0,
+            max_value=1100.0,
+            step=0.1,
+            key="override_surface_pressure",
+            value=float(current_snapshot["pressure"]),
+        )
+        st.number_input(
+            "Lớp biên khí quyển (m)",
+            min_value=0.0,
+            max_value=5000.0,
+            step=10.0,
+            key="override_boundary_layer_height",
+            value=float(current_snapshot["boundary_layer_height"]),
+        )
+
+
+def collect_overrides() -> dict[str, float]:
+    defaults = st.session_state["prediction_payload"]["override_defaults"]
+    current_values = {
+        "pm25_avg": float(st.session_state["override_pm25_avg"]),
+        "coverage_pct": float(st.session_state["override_coverage_pct"]),
+        "temperature_2m": float(st.session_state["override_temperature_2m"]),
+        "relative_humidity_2m": float(st.session_state["override_relative_humidity_2m"]),
+        "precipitation": float(st.session_state["override_precipitation"]),
+        "wind_speed_10m": float(st.session_state["override_wind_speed_10m"]),
+        "wind_direction_10m": float(st.session_state["override_wind_direction_10m"]),
+        "surface_pressure": float(st.session_state["override_surface_pressure"]),
+        "boundary_layer_height": float(st.session_state["override_boundary_layer_height"]),
+    }
+    changed: dict[str, float] = {}
+    for key, value in current_values.items():
+        if abs(value - float(defaults[key])) > 1e-9:
+            changed[key] = value
+    return changed
+
 
 def main():
     st.set_page_config(page_title="Dự báo PM2.5", page_icon="🔬", layout="wide")
     inject_css()
 
-    st.markdown('<h1 style="font-size:1.5rem;font-weight:700;color:#111827;"> Predict PM2.5 within 6 hours</h1>',
-                unsafe_allow_html=True)
-    st.caption("Nhập các thông số môi trường để xem mô hình dự báo nồng độ bụi mịn.")
-    st.divider()
+    st.markdown(
+        """
+        <div class="page-hero">
+          <h1>Dự báo PM2.5 trong 1 đến 6 giờ tới</h1>
+          <p>
+            Hệ thống tự động lấy lịch sử PM2.5 từ OpenAQ, thời tiết từ Open-Meteo, tái tạo đầy đủ đặc trưng của mô hình CatBoost
+            và hiển thị phần dự báo tách biệt rõ với quan trắc hiện tại.
+          </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption("Các nhãn giao diện được giữ bằng tiếng Việt, còn pipeline suy luận bám theo mô hình CatBoost đa đầu ra.")
 
-    # ── Inputs ──
-    col_left, col_right = st.columns(2, gap="large")
-
+    col_left, col_right = st.columns([1.1, 1], gap="large")
     with col_left:
-        st.markdown('<div class="block-title">📊 PM2.5 lịch sử</div>', unsafe_allow_html=True)
-        if st.button("⚡ Auto-fill từ API", use_container_width=True):
-            with st.spinner("Đang lấy dữ liệu..."):
+        st.markdown('<div class="input-panel">', unsafe_allow_html=True)
+        st.markdown('<div class="block-title">Lịch sử PM2.5</div>', unsafe_allow_html=True)
+        if st.button("Tự động điền từ API", type="primary", use_container_width=True):
+            with st.spinner("Đang lấy dữ liệu PM2.5 và thời tiết mới nhất..."):
                 try:
-                    data = get_current_data()
-                    st.session_state["lag_1h"]  = float(data.get("pm25", 35.0))
-                    st.session_state["lag_3h"]  = float(data.get("pm25_3h", 30.0))
-                    st.session_state["lag_24h"] = float(data.get("pm25_24h", 28.0))
-                    st.success("Đã điền giá trị thực tế ✓")
-                except Exception as e:
-                    st.error(f"Lỗi: {e}")
-
-        lag_1h  = st.number_input("PM2.5 1 giờ trước (μg/m³)",  0.0, 500.0, step=0.5, key="lag_1h",  value=st.session_state.get("lag_1h",  35.0))
-        lag_3h  = st.number_input("PM2.5 3 giờ trước (μg/m³)",  0.0, 500.0, step=0.5, key="lag_3h",  value=st.session_state.get("lag_3h",  30.0))
-        lag_24h = st.number_input("PM2.5 24 giờ trước (μg/m³)", 0.0, 500.0, step=0.5, key="lag_24h", value=st.session_state.get("lag_24h", 28.0))
+                    _store_autofill_payload()
+                    st.success("Đã nạp dữ liệu thật từ API. Bạn có thể chỉnh tay ở các ô bên dưới nếu muốn.")
+                except Exception as exc:
+                    st.error(f"Không thể lấy dữ liệu tự động: {exc}")
+        render_input_summary()
+        st.markdown("</div>", unsafe_allow_html=True)
 
     with col_right:
-        st.markdown('<div class="block-title">🌤️ Thông số khí tượng</div>', unsafe_allow_html=True)
-        temperature = st.slider("Nhiệt độ (°C)",    15.0, 45.0, 30.0, step=0.5, format="%.1f °C")
-        humidity    = st.slider("Độ ẩm (%)",         10,  100,   70,  step=1,   format="%d %%")
-        wind_speed  = st.slider("Tốc độ gió (m/s)",  0.0, 20.0,  2.5, step=0.1, format="%.1f m/s")
+        st.markdown('<div class="input-panel">', unsafe_allow_html=True)
+        st.markdown('<div class="block-title">Tùy chọn dự báo</div>', unsafe_allow_html=True)
+        st.markdown("Mô hình luôn sinh đủ 6 giá trị từ `t+1` đến `t+6`, sau đó giao diện chỉ hiển thị phần bạn chọn.")
+        st.markdown(
+            """
+            <div class="status-chip">
+              <span class="status-dot"></span>
+              Đường màu đỏ là vùng dự báo, đường màu xanh là dữ liệu lịch sử.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    st.divider()
+    st.markdown("#### Chọn số giờ muốn hiển thị")
+    horizon = st.radio(
+        "Số giờ dự báo",
+        [1, 2, 3, 4, 5, 6],
+        format_func=lambda value: f"{value} giờ",
+        horizontal=True,
+        label_visibility="collapsed",
+    )
 
-    # ── Horizon ──
-    st.markdown("#### Dự báo bao nhiêu giờ tới?")
-    horizon = st.radio("horizon", [1, 2, 3, 4, 5, 6],
-                       format_func=lambda x: f"{x} giờ",
-                       horizontal=True, label_visibility="collapsed")
-    st.divider()
+    if st.button("Chạy dự báo", type="primary", use_container_width=True):
+        if "prediction_payload" not in st.session_state:
+            st.warning("Hãy nhấn “Tự động điền từ API” trước khi chạy dự báo.")
+            st.stop()
 
-    # ── Predict ──
-    if st.button("Dự báo", type="primary", use_container_width=True):
-        features = {
-            "pm25_lag1":   lag_1h,
-            "pm25_lag3":   lag_3h,
-            "pm25_lag24":  lag_24h,
-            "temperature": temperature,
-            "humidity":    humidity,
-            "wind_speed":  wind_speed,
-        }
-
-        with st.spinner("Đang chạy mô hình..."):
+        overrides = collect_overrides()
+        payload = st.session_state["prediction_payload"]
+        with st.spinner("Đang dựng đặc trưng và chạy mô hình CatBoost..."):
             try:
-                predictions = predict_multi_horizon(features, horizon)
-            except Exception as e:
-                st.error(f"Lỗi predict: {e}")
+                bundle = run_forecast(
+                    pm_history=payload["pm_history"],
+                    weather_history=payload["weather_history"],
+                    overrides=overrides,
+                )
+            except Exception as exc:
+                st.error(f"Lỗi dự báo: {exc}")
                 st.stop()
 
-        now          = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh"))
-        future_hours = [(now + timedelta(hours=i + 1)).strftime("%H:%M") for i in range(horizon)]
-
+        predictions = bundle.predictions[:horizon]
+        future_hours = [timestamp.strftime("%H:%M") for timestamp in bundle.prediction_times_vn[:horizon]]
         st.markdown("### Kết quả dự báo")
         render_result_cards(predictions, future_hours)
 
-        if horizon >= 3:
-            st.markdown("<br>", unsafe_allow_html=True)
-            render_forecast_chart(predictions, future_hours)
+        for warning in bundle.warnings:
+            st.warning(warning)
 
+        artifact_name = bundle.artifact.model_path.name
+        generated_text = "được tạo tự động cho deployment" if bundle.artifact.generated else "được nạp từ thư mục model"
+        st.caption(
+            f"Artifact đang dùng: `{artifact_name}` ({generated_text}). Thời điểm dự báo: {bundle.generated_at_vn.strftime('%H:%M %d/%m/%Y')}."
+        )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        render_live_chart(bundle, horizon)
         render_suggestion(predictions, future_hours)
 
 
