@@ -19,9 +19,10 @@ from src.inference.feature_builder import (
 )
 
 
-MODEL_DIR = PROJECT_ROOT / "model" / "multi_6h_weights"
+MODEL_DIR = PROJECT_ROOT / "notebooks" / "model" / "multi_6h_weights"
 MODEL_PATH = MODEL_DIR / "catboost_multi_horizon_deployable.cbm"
 METADATA_PATH = MODEL_DIR / "deployment_metadata.json"
+CATBOOST_INFO_DIR = PROJECT_ROOT / "notebooks" / "catboost_info"
 
 
 @dataclass(slots=True)
@@ -36,23 +37,35 @@ class LoadedArtifact:
 def _candidate_model_paths() -> list[Path]:
     patterns = ["*.cbm", "*.bin", "*.joblib", "*.pkl"]
     candidates: list[Path] = []
-    for root in [PROJECT_ROOT / "model", PROJECT_ROOT / "models"]:
+    seen: set[Path] = set()
+    for root in [
+        PROJECT_ROOT / "notebooks" / "model",
+        PROJECT_ROOT / "model",
+        PROJECT_ROOT / "models",
+    ]:
         if not root.exists():
             continue
         for pattern in patterns:
-            candidates.extend(root.rglob(pattern))
-    return sorted({candidate.resolve() for candidate in candidates if candidate.is_file()})
+            for candidate in root.rglob(pattern):
+                resolved = candidate.resolve()
+                if candidate.is_file() and resolved not in seen:
+                    candidates.append(resolved)
+                    seen.add(resolved)
+    return candidates
 
 
-def discover_model_artifact() -> Path | None:
-    if MODEL_PATH.exists():
-        return MODEL_PATH
+def discover_model_artifact() -> tuple[Path, Path] | None:
+    if MODEL_PATH.exists() and METADATA_PATH.exists():
+        return MODEL_PATH, METADATA_PATH
     for candidate in _candidate_model_paths():
         lowered = candidate.name.lower()
+        metadata_candidate = candidate.with_name("deployment_metadata.json")
+        if not metadata_candidate.exists():
+            continue
         if "catboost" in lowered and "6h" in lowered:
-            return candidate
+            return candidate, metadata_candidate
         if candidate.suffix == ".cbm":
-            return candidate
+            return candidate, metadata_candidate
     return None
 
 
@@ -94,6 +107,7 @@ def train_deployable_artifact(force: bool = False) -> tuple[Path, Path]:
         od_type="Iter",
         od_wait=120,
         random_seed=42,
+        train_dir=CATBOOST_INFO_DIR.as_posix(),
         verbose=100,
     )
     model.fit(
@@ -110,7 +124,7 @@ def train_deployable_artifact(force: bool = False) -> tuple[Path, Path]:
         "\n".join(
             [
                 "Deployable artifact generated because no serialized CatBoost model was found in the repository.",
-                "The CatBoost direct multi-horizon setup from model/6h_pm.py was preserved.",
+                "The CatBoost direct multi-horizon setup from notebooks/model/6h_pm.py was preserved.",
                 "target_next_hour was excluded because it is a future-leaking helper column and cannot be used at inference time.",
                 f"Generated at: {datetime.utcnow().isoformat()}Z",
             ]
@@ -121,12 +135,13 @@ def train_deployable_artifact(force: bool = False) -> tuple[Path, Path]:
 
 
 def load_or_create_artifact(force_rebuild: bool = False) -> LoadedArtifact:
-    model_path = discover_model_artifact()
-    metadata_path = METADATA_PATH
+    discovered = discover_model_artifact()
     generated = False
-    if force_rebuild or model_path is None or not metadata_path.exists():
+    if force_rebuild or discovered is None:
         model_path, metadata_path = train_deployable_artifact(force=force_rebuild)
         generated = True
+    else:
+        model_path, metadata_path = discovered
 
     model = CatBoostRegressor()
     model.load_model(model_path.as_posix())

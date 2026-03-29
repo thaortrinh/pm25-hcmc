@@ -6,8 +6,8 @@ This repository includes a deployable Streamlit inference pipeline for the CatBo
 
 - Fetches recent PM2.5 sensor history from OpenAQ
 - Fetches recent weather history from Open-Meteo
-- Rebuilds the training-era engineered features used by `model/6h_pm.py`
-- Loads a CatBoost multi-output artifact from `model/multi_6h_weights/`
+- Rebuilds the training-era engineered features used by `notebooks/model/6h_pm.py`
+- Loads a CatBoost multi-output artifact from `notebooks/model/multi_6h_weights/`
 - Generates a deployable CatBoost artifact if the repository only contains metrics and feature-importance files
 - Shows a Vietnamese prediction UI with historical vs forecast PM2.5 charting
 
@@ -20,7 +20,7 @@ This repository includes a deployable Streamlit inference pipeline for the CatBo
 - `src/services/openmeteo_client.py`
   - Recent hourly weather history loader from Open-Meteo
 - `src/inference/feature_builder.py`
-  - Rebuilds the base processed features, applies saved scaling, then adds the extra 6-hour CatBoost features from `model/6h_pm.py`
+  - Rebuilds the base processed features, applies saved scaling, then adds the extra 6-hour CatBoost features from `notebooks/model/6h_pm.py`
 - `src/inference/artifact.py`
   - Detects the best serialized CatBoost artifact and creates one if missing
 - `src/inference/predict.py`
@@ -32,16 +32,16 @@ This repository includes a deployable Streamlit inference pipeline for the CatBo
 
 The repository currently contains:
 
-- `model/multi_6h_weights/metrics.json`
-- `model/multi_6h_weights/predictions.csv`
-- `model/multi_6h_weights/feature_importance.csv`
+- `notebooks/model/multi_6h_weights/metrics.json`
+- `notebooks/model/multi_6h_weights/predictions.csv`
+- `notebooks/model/multi_6h_weights/feature_importance.csv`
 
 It does not contain a serialized CatBoost model file. Because of that, the deployment code will generate:
 
-- `model/multi_6h_weights/catboost_multi_horizon_deployable.cbm`
-- `model/multi_6h_weights/deployment_metadata.json`
+- `notebooks/model/multi_6h_weights/catboost_multi_horizon_deployable.cbm`
+- `notebooks/model/multi_6h_weights/deployment_metadata.json`
 
-The deployment artifact keeps the CatBoost direct multi-horizon setup from `model/6h_pm.py` and excludes `target_next_hour`, which is a future-leaking helper column and should not be used at inference time.
+The deployment artifact keeps the CatBoost direct multi-horizon setup from `notebooks/model/6h_pm.py` and excludes `target_next_hour`, which is a future-leaking helper column and should not be used at inference time.
 
 ## Installation
 
@@ -79,7 +79,7 @@ streamlit run App.py
 | `data/raw/pm25_sensor_11357424.csv` | Raw PM2.5 hourly observations |
 | `data/raw/weather_openmeteo.csv` | Raw hourly weather history |
 | `data/processed/pm25_processed_data.csv` | Processed training-era feature reference |
-| `model/6h_pm.py` | Multi-horizon CatBoost training script |
+| `notebooks/model/6h_pm.py` | Multi-horizon CatBoost training script |
 
 ## Inference assumptions
 

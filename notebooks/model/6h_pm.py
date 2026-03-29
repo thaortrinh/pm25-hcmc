@@ -30,9 +30,11 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 # =========================================================
 # CONFIG
 # =========================================================
-CSV_PATH = "data/processed/pm25_processed_data.csv"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CSV_PATH = PROJECT_ROOT / "data" / "processed" / "pm25_processed_data.csv"
 SOURCE_TARGET_COL = "pm25_avg"
-OUTPUT_DIR = "C:/Users/Quoc Thai/OneDrive/Desktop/pm25-hcmc/model/multi_6h_weights"
+OUTPUT_DIR = PROJECT_ROOT / "notebooks" / "model" / "multi_6h_weights"
+TRAIN_DIR = PROJECT_ROOT / "notebooks" / "catboost_info"
 
 RANDOM_SEED = 42
 TRAIN_RATIO = 0.70
@@ -206,6 +208,7 @@ def train_catboost_multi(X_train, y_train, X_valid, y_valid, cat_cols):
         od_type="Iter",
         od_wait=120,
         random_seed=RANDOM_SEED,
+        train_dir=TRAIN_DIR.as_posix(),
         verbose=100
     )
 
@@ -224,7 +227,8 @@ def train_catboost_multi(X_train, y_train, X_valid, y_valid, cat_cols):
 # =========================================================
 def main():
     set_seed(RANDOM_SEED)
-    Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    TRAIN_DIR.mkdir(parents=True, exist_ok=True)
 
     df, target_cols = load_data(CSV_PATH)
     X, y, feature_cols, cat_cols = prepare_xy(df, target_cols)
@@ -255,19 +259,19 @@ def main():
         for metric_name, metric_val in v.items():
             print(f"  {metric_name}: {metric_val:.6f}")
 
-    with open(Path(OUTPUT_DIR) / "metrics.json", "w", encoding="utf-8") as f:
+    with open(OUTPUT_DIR / "metrics.json", "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
 
     pred_out = pred_eval.copy()
     pred_out.columns = [f"pred_{c}" for c in pred_out.columns]
     save_df = pd.concat([y_eval.reset_index(drop=True), pred_out.reset_index(drop=True)], axis=1)
-    save_df.to_csv(Path(OUTPUT_DIR) / "predictions.csv", index=False)
+    save_df.to_csv(OUTPUT_DIR / "predictions.csv", index=False)
 
     fi = pd.DataFrame({
         "feature": feature_cols,
         "importance": model.get_feature_importance()
     }).sort_values("importance", ascending=False)
-    fi.to_csv(Path(OUTPUT_DIR) / "feature_importance.csv", index=False)
+    fi.to_csv(OUTPUT_DIR / "feature_importance.csv", index=False)
 
     print("\nTop 25 features:")
     print(fi.head(25).to_string(index=False))
