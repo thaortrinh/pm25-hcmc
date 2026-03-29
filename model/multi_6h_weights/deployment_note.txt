@@ -1,4 +1,0 @@
-Deployable artifact generated because no serialized CatBoost model was found in the repository.
-The CatBoost direct multi-horizon setup from model/6h_pm.py was preserved.
-target_next_hour was excluded because it is a future-leaking helper column and cannot be used at inference time.
-Generated at: 2026-03-29T18:49:33.457921Z
