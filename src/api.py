@@ -8,6 +8,7 @@ Data fetching layer.
 import random
 from datetime import datetime, timedelta
 from typing import TypedDict
+from zoneinfo import ZoneInfo
 
 import requests
 import streamlit as st
@@ -25,6 +26,8 @@ from config import (
 )
 
 load_dotenv()
+
+VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -70,15 +73,15 @@ def _mock_pm25_series(n: int, base: float = 38.0, noise: float = 8.0) -> list[fl
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=300)
-def _fetch_pm25() -> tuple[float, list[float]]:
+def _fetch_pm25() -> tuple[float, list[tuple[str, float]]]:
     """
-    Trả về (pm25_latest, pm25_values_24h).
+    Trả về (pm25_latest, [(utc_timestamp, value), ...]).
 
     Bước 1 – GET /v3/locations/{LOCATION_ID}/latest
         Lấy giá trị PM2.5 mới nhất từ SENSOR_ID đã biết trong config.
 
     Bước 2 – GET /v3/sensors/{SENSOR_ID}/hours
-        Lấy 24 bản ghi hourly gần nhất (sort desc) để tính avg 3h / 24h.
+        Lấy 24 bản ghi hourly gần nhất (sort desc) kèm timestamp UTC.
     """
     # ── Bước 1: latest PM2.5 ─────────────────────────────────────────────────
     r = requests.get(
@@ -104,15 +107,15 @@ def _fetch_pm25() -> tuple[float, list[float]]:
         headers=HEADERS,
         timeout=10,
     )
-    values_24h: list[float] = []
+    values_24h: list[tuple[str, float]] = []
     if r.ok:
-        values_24h = [
-            row["value"]
-            for row in r.json().get("results", [])
-            if row.get("value") is not None
-        ]
+        for row in r.json().get("results", []):
+            val = row.get("value")
+            dt_utc = row.get("period", {}).get("datetimeFrom", {}).get("utc")
+            if val is not None and dt_utc is not None:
+                values_24h.append((dt_utc, val))
     if not values_24h:
-        values_24h = [pm25_latest]  # fallback
+        values_24h = [("", pm25_latest)]  # fallback
 
     return pm25_latest, values_24h
 
@@ -182,8 +185,9 @@ def get_current_data() -> CurrentData:
 
     try:
         pm25_latest, values_24h = _fetch_pm25()
-        pm25_3h  = round(sum(values_24h[:3]) / min(3, len(values_24h)), 1)
-        pm25_24h = round(sum(values_24h) / len(values_24h), 1)
+        vals = [v for _, v in values_24h]
+        pm25_3h  = round(sum(vals[:3]) / min(3, len(vals)), 1)
+        pm25_24h = round(sum(vals) / len(vals), 1)
     except Exception as e:
         station = f"{SENSOR_NAME} [OpenAQ lỗi: {e}]"
 
@@ -198,7 +202,7 @@ def get_current_data() -> CurrentData:
         precipitation         = meteo["precipitation"],
         pressure              = meteo["surface_pressure"],
         boundary_layer_height = meteo["boundary_layer_height"],
-        updated_at            = datetime.now().strftime("%H:%M"),
+        updated_at            = datetime.now(VN_TZ).strftime("%H:%M"),
         station               = station,
     )
 
@@ -208,18 +212,20 @@ def get_history_24h() -> list[HistoryPoint]:
     try:
         _, values_24h = _fetch_pm25()
 
-        now = datetime.now()
-
-        # đảo lại: oldest → latest
+        # đảo lại: API trả về desc (mới nhất trước), chart cần oldest → latest
         values_24h = list(reversed(values_24h))
 
-        return [
-            HistoryPoint(
-                time=(now - timedelta(hours=23 - i)).strftime("%H:%M"),
-                pm25=round(values_24h[i], 1),
-            )
-            for i in range(len(values_24h))
-        ]
+        points = []
+        for dt_str, val in values_24h:
+            if dt_str:
+                dt_utc = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+                dt_vn = dt_utc.astimezone(VN_TZ)
+                label = dt_vn.strftime("%H:%M")
+            else:
+                label = datetime.now(VN_TZ).strftime("%H:%M")
+            points.append(HistoryPoint(time=label, pm25=round(val, 1)))
+
+        return points
 
     except Exception as e:
         print("get_history_24h error:", e)
@@ -231,7 +237,7 @@ def get_forecast_6h() -> list[HistoryPoint]:
     Dự báo PM2.5 6h tới.
     TODO: thay bằng model ML khi sẵn sàng.
     """
-    now    = datetime.now()
+    now    = datetime.now(VN_TZ)
     series = _mock_pm25_series(6, base=get_current_data()["pm25"], noise=6.0)
     return [
         HistoryPoint(
