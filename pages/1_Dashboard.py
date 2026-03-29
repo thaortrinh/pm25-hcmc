@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from src.aqi import pm25_to_aqi
 from src.api import get_current_data, get_history_24h
@@ -224,7 +225,7 @@ def main():
     st.markdown(f"""
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
       <h1 style="font-size:1.5rem;font-weight:700;color:#111827;margin:0;">Chỉ số Chất lượng Không khí (AQI) ở Quận 1 - TP.HCM</h1>
-      <span style="font-size:0.72rem;color:#9ca3af;">Cập nhật lúc {current['updated_at']}</span>
+      <span style="font-size:0.72rem;color:#9ca3af;">Today: {datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).strftime("%d/%m/%Y")} · Cập nhật lúc {current['updated_at']}</span>
     </div>
     <div class="station-tag">
       <div class="live-dot"></div>{current['station']}
@@ -263,9 +264,6 @@ def main():
     col_chart, col_scale = st.columns([3, 2])
     with col_chart:
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-        st.markdown('<div style="font-size:0.72rem;font-weight:600;letter-spacing:0.1em;'
-                    'text-transform:uppercase;color:#9ca3af;margin-bottom:4px;">PM2.5 · 24h</div>',
-                    unsafe_allow_html=True)
         render_history_chart(get_history_24h())
         st.markdown('</div>', unsafe_allow_html=True)
     with col_scale:
