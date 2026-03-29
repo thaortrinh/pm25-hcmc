@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from src.aqi import pm25_to_aqi
 from src.api import get_current_data
@@ -203,7 +204,7 @@ def main():
                 st.error(f"Lỗi predict: {e}")
                 st.stop()
 
-        now          = datetime.now()
+        now          = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh"))
         future_hours = [(now + timedelta(hours=i + 1)).strftime("%H:%M") for i in range(horizon)]
 
         st.markdown("### Kết quả dự báo")

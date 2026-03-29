@@ -156,6 +156,10 @@ def render_aqi_scale(current_aqi: int):
 
 
 def render_history_chart(history: list):
+    if not history:
+        st.info("Không có dữ liệu lịch sử 24h.")
+        return
+
     df = pd.DataFrame(history)
 
     aqi_info = pm25_to_aqi(df["pm25"].iloc[-1])
