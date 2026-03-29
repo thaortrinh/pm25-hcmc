@@ -17,8 +17,11 @@ BASE_URL_OPENMETEO = "https://archive-api.open-meteo.com/v1/archive"
 
 HCMC_LAT = 10.8231
 HCMC_LON = 106.6297
-SENSOR_ID   = 11357424
+# CMT8
+SENSOR_ID   = 11357424 # sensor id for PM2.5
+LOCATION_ID = 3276359 # location id for CMT8 station
 SENSOR_NAME = "CMT8"
+
 DATE_START  = "2024-11-19"
 DATE_END    = "2026-03-23"
 # Train / validation / test split

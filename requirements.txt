@@ -6,7 +6,11 @@ numpy>=1.24
 requests             # OpenAQ
 # matplotlib>=3.7
 # seaborn>=0.12
-# joblib
+joblib
 python-dotenv
-# jupyter
+notebook
 python-dateutil>=2.8
+
+streamlit
+plotly
+pandas
