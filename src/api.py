@@ -112,7 +112,7 @@ def _fetch_pm25() -> tuple[float, list[tuple[str, float]]]:
     if r.ok:
         for row in r.json().get("results", []):
             val = row.get("summary", {}).get("avg")
-            dt_utc = row.get("period", {}).get("datetimeFrom", {}).get("utc")
+            dt_utc = row.get("period", {}).get("datetimeTo", {}).get("utc")
             if val is not None and dt_utc is not None:
                 values_24h.append((dt_utc, val))
     if not values_24h:
