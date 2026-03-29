@@ -17,7 +17,7 @@ def inject_css():
       @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
 
       html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
-      #MainMenu, footer, header  { visibility: hidden; }
+      #MainMenu, footer, header, [data-testid="stSidebar"], [data-testid="stSidebarNav"] { visibility: hidden; display: none; }
 
       .stApp { background: #f5f6fa; color: #111827; }
 
@@ -263,7 +263,12 @@ def main():
     st.markdown('<div class="section-title">Lịch sử 24 giờ qua</div>', unsafe_allow_html=True)
     col_chart, col_scale = st.columns([3, 2])
     with col_chart:
+        today_str = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).strftime("%d/%m/%Y")
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:0.72rem;font-weight:600;letter-spacing:0.1em;'
+                    f'text-transform:uppercase;color:#9ca3af;margin-bottom:4px;">PM2.5 · 24h</div>'
+                    f'<div style="font-size:0.68rem;color:#b0b5bf;margin-bottom:8px;">Today: {today_str}</div>',
+                    unsafe_allow_html=True)
         render_history_chart(get_history_24h())
         st.markdown('</div>', unsafe_allow_html=True)
     with col_scale:
