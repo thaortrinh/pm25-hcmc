@@ -58,6 +58,10 @@ Then add your OpenAQ key to `.env`:
 OPENAQ_API_KEY=your_openaq_api_key
 ```
 
+```libraries
+pip install catboost, scikit-learn, numpy, pandas
+```
+
 ## Run locally
 
 Optional prebuild step:
