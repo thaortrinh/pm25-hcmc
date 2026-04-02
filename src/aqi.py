@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 AQI_LEVELS = [
     (0, 50, "Tốt", "#00e400", "#000000"),
-    (51, 100, "Trung bình", "#ffff00", "#000000"),
+    (51, 100, "Trung bình", "#e3ea08", "#000000"),
     (101, 150, "Kém", "#ff7e00", "#000000"),
     (151, 200, "Xấu", "#ff0000", "#ffffff"),
     (201, 300, "Rất xấu", "#8f3f97", "#ffffff"),

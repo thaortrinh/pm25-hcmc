@@ -148,51 +148,46 @@ def render_aqi_badge(label: str, bg: str, text: str, css_class: str = "aqi-badge
     return f'<span class="{css_class}" style="background:{bg};color:{text}">{label}</span>'
 
 
-def render_result_cards(predictions: list[float], future_hours: list[str]):
-    horizon = len(predictions)
-    if horizon == 1:
-        info = pm25_to_aqi(predictions[0])
-        badge = render_aqi_badge(
-            f"{info.label} · AQI {info.aqi}",
-            info.bg_color,
-            info.text_color,
-            "aqi-badge-large",
-        )
-        st.markdown(
-            f"""
-            <div class="result-card-large">
-              <div class="hour" style="font-size:0.85rem;margin-bottom:8px;">
-                Dự báo lúc {future_hours[0]}
-              </div>
-              <div class="val" style="color:{info.bg_color};">
-                {predictions[0]:.1f}
-                <span style="font-size:1.1rem;font-weight:500;color:var(--text-muted);">µg/m³</span>
-              </div>
-              {badge}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        return
+def render_result_cards(predictions: list[float | None], future_hours: list[str]):
+        display_predictions = predictions[:6] + [None] * max(0, 6 - len(predictions))
+        display_hours = future_hours[:6] + ["--:--"] * max(0, 6 - len(future_hours))
 
-    cols = st.columns(horizon)
-    for index, (column, pm25_value, hour_str) in enumerate(zip(cols, predictions, future_hours), start=1):
-        info = pm25_to_aqi(pm25_value)
-        badge = render_aqi_badge(info.label, info.bg_color, info.text_color)
-        with column:
-            st.markdown(
-                f"""
-                <div class="result-card">
-                  <div class="hour" style="font-family:'Space Mono', monospace;font-size:0.75rem;margin-bottom:4px;">
-                    t+{index}h · {hour_str}
-                  </div>
-                  <div class="val" style="color:{info.bg_color};">{pm25_value:.1f}</div>
-                  <div class="unit">µg/m³</div>
-                  <div style="margin-top:8px;">{badge}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+        cols = st.columns(6)
+        for index, (column, pm25_value, hour_str) in enumerate(zip(cols, display_predictions, display_hours), start=1):
+                with column:
+                        if pm25_value is None:
+                                st.markdown(
+                                        f"""
+                                        <div class="result-card">
+                                            <div class="hour" style="font-family:'Space Mono', monospace;font-size:0.75rem;margin-bottom:4px;">
+                                                t+{index}h · {hour_str}
+                                            </div>
+                                            <div class="val" style="color:var(--text-faint);">--</div>
+                                            <div class="unit">µg/m³</div>
+                                            <div style="margin-top:8px;">
+                                                <span class="aqi-badge" style="background:var(--border-color);color:var(--text-muted);">Chưa có dự báo</span>
+                                            </div>
+                                        </div>
+                                        """,
+                                        unsafe_allow_html=True,
+                                )
+                                continue
+
+                        info = pm25_to_aqi(pm25_value)
+                        badge = render_aqi_badge(info.label, info.bg_color, info.text_color)
+                        st.markdown(
+                                f"""
+                                <div class="result-card">
+                                    <div class="hour" style="font-family:'Space Mono', monospace;font-size:0.75rem;margin-bottom:4px;">
+                                        t+{index}h · {hour_str}
+                                    </div>
+                                    <div class="val" style="color:{info.bg_color};">{pm25_value:.1f}</div>
+                                    <div class="unit">µg/m³</div>
+                                    <div style="margin-top:8px;">{badge}</div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                        )
 
 
 def render_suggestion(predictions: list[float], hours: list[str]):
@@ -203,20 +198,20 @@ def render_suggestion(predictions: list[float], hours: list[str]):
     trend = predictions[-1] - predictions[0]
 
     if max_val > 150:
-        level = f"PM2.5 có thể đạt **{max_val:.1f} µg/m³** lúc {max_hour}, mức ô nhiễm cao."
+        level = f"PM2.5 có thể đạt <strong>{max_val:.1f} µg/m³</strong> lúc {max_hour}, mức ô nhiễm cao."
     elif max_val > 80:
-        level = f"PM2.5 có thể tăng lên **{max_val:.1f} µg/m³** lúc {max_hour}, nên theo dõi kỹ."
+        level = f"PM2.5 có thể tăng lên <strong>{max_val:.1f} µg/m³</strong> lúc {max_hour}, nên theo dõi kỹ."
     elif max_val > 35:
-        level = f"Không khí ở mức trung bình, đỉnh dự báo là **{max_val:.1f} µg/m³** lúc {max_hour}."
+        level = f"Không khí ở mức trung bình, đỉnh dự báo là <strong>{max_val:.1f} µg/m³</strong> lúc {max_hour}."
     else:
-        level = f"Không khí tương đối tốt, PM2.5 giữ dưới **{max_val:.1f} µg/m³** trong {len(predictions)} giờ tới."
+        level = f"Không khí tương đối tốt, PM2.5 giữ dưới <strong>{max_val:.1f} µg/m³</strong> trong {len(predictions)} giờ tới."
 
     if trend > 10:
-        trend_msg = f" Xu hướng đang **tăng dần**; nếu cần ra ngoài, nên ưu tiên trước {hours[0]}."
+        trend_msg = f" Xu hướng đang <strong>tăng dần</strong>; nếu cần ra ngoài, nên ưu tiên trước {hours[0]}."
     elif trend < -10:
-        trend_msg = f" Dự báo **cải thiện** rõ sau {min_hour}."
+        trend_msg = f" Dự báo <strong>cải thiện</strong> rõ sau {min_hour}."
     else:
-        trend_msg = " Mức ô nhiễm nhìn chung **ổn định** trong khung giờ này."
+        trend_msg = " Mức ô nhiễm nhìn chung <strong>ổn định</strong> trong khung giờ này."
 
     st.markdown(f'<div class="suggestion-box">{level}{trend_msg}</div>', unsafe_allow_html=True)
 
@@ -328,6 +323,7 @@ def _store_autofill_payload():
         "current_snapshot": current_snapshot,
         "override_defaults": override_defaults,
     }
+    st.session_state["latest_forecast_bundle"] = None
 
 
 def render_input_summary():
@@ -506,7 +502,7 @@ def main():
     with col_right:
         st.markdown('<div class="input-panel">', unsafe_allow_html=True)
         st.markdown('<div class="block-title">Tùy chọn dự báo</div>', unsafe_allow_html=True)
-        st.markdown("Mô hình luôn sinh đủ 6 giá trị từ `t+1` đến `t+6`, sau đó giao diện chỉ hiển thị phần bạn chọn.")
+        st.markdown("Mô hình luôn sinh đủ 6 giá trị từ `t+1` đến `t+6` và hiển thị đồng thời trong 6 khung kết quả.")
         st.markdown(
             """
             <div class="status-chip">
@@ -518,50 +514,57 @@ def main():
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("#### Chọn số giờ muốn hiển thị")
-    horizon = st.radio(
-        "Số giờ dự báo",
-        [1, 2, 3, 4, 5, 6],
-        format_func=lambda value: f"{value} giờ",
-        horizontal=True,
-        label_visibility="collapsed",
-    )
+    if "latest_forecast_bundle" not in st.session_state:
+        st.session_state["latest_forecast_bundle"] = None
 
-    if st.button("Chạy dự báo", type="primary", use_container_width=True):
+    run_clicked = st.button("Chạy dự báo", type="primary", use_container_width=True)
+    if run_clicked:
         if "prediction_payload" not in st.session_state:
             st.warning("Hãy nhấn “Tự động điền từ API” trước khi chạy dự báo.")
-            st.stop()
 
-        overrides = collect_overrides()
-        payload = st.session_state["prediction_payload"]
-        with st.spinner("Đang dựng đặc trưng và chạy mô hình CatBoost..."):
-            try:
-                bundle = run_forecast(
-                    pm_history=payload["pm_history"],
-                    weather_history=payload["weather_history"],
-                    overrides=overrides,
-                )
-            except Exception as exc:
-                st.error(f"Lỗi dự báo: {exc}")
-                st.stop()
+        else:
+            overrides = collect_overrides()
+            payload = st.session_state["prediction_payload"]
+            with st.spinner("Đang dựng đặc trưng và chạy mô hình CatBoost..."):
+                try:
+                    bundle = run_forecast(
+                        pm_history=payload["pm_history"],
+                        weather_history=payload["weather_history"],
+                        overrides=overrides,
+                    )
+                    st.session_state["latest_forecast_bundle"] = bundle
+                except Exception as exc:
+                    st.error(f"Lỗi dự báo: {exc}")
 
-        predictions = bundle.predictions[:horizon]
-        future_hours = [timestamp.strftime("%H:%M") for timestamp in bundle.prediction_times_vn[:horizon]]
-        st.markdown("### Kết quả dự báo")
-        render_result_cards(predictions, future_hours)
+    bundle = st.session_state.get("latest_forecast_bundle")
+    predictions: list[float | None]
+    future_hours: list[str]
+    if bundle is None:
+        predictions = [None] * 6
+        future_hours = ["--:--"] * 6
+    else:
+        predictions = bundle.predictions[:6]
+        future_hours = [timestamp.strftime("%H:%M") for timestamp in bundle.prediction_times_vn[:6]]
 
-        for warning in bundle.warnings:
-            st.warning(warning)
+    st.markdown("### Kết quả dự báo")
+    render_result_cards(predictions, future_hours)
 
-        artifact_name = bundle.artifact.model_path.name
-        generated_text = "được tạo tự động cho deployment" if bundle.artifact.generated else "được nạp từ thư mục model"
-        st.caption(
-            f"Artifact đang dùng: `{artifact_name}` ({generated_text}). Thời điểm dự báo: {bundle.generated_at_vn.strftime('%H:%M %d/%m/%Y')}."
-        )
+    if bundle is None:
+        st.caption("Nhấn “Chạy dự báo” để cập nhật 6 giá trị PM2.5 cho các mốc t+1 đến t+6.")
+        return
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        render_live_chart(bundle, horizon)
-        render_suggestion(predictions, future_hours)
+    for warning in bundle.warnings:
+        st.warning(warning)
+
+    artifact_name = bundle.artifact.model_path.name
+    generated_text = "được tạo tự động cho deployment" if bundle.artifact.generated else "được nạp từ thư mục model"
+    st.caption(
+        f"Artifact đang dùng: `{artifact_name}` ({generated_text}). Thời điểm dự báo: {bundle.generated_at_vn.strftime('%H:%M %d/%m/%Y')}."
+    )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    render_live_chart(bundle, 6)
+    render_suggestion(bundle.predictions[:6], future_hours)
 
 
 if __name__ == "__main__":

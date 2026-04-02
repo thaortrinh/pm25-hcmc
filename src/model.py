@@ -1,10 +1,3 @@
-# src/model.py
-"""
-Model inference layer.
-Hiện tại: mock bằng công thức đơn giản.
-Sau này: load pkl và gọi model.predict() là xong.
-"""
-
 import random
 import joblib
 import os
