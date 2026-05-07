@@ -1,90 +1,68 @@
-# PM2.5 Forecasting App - Ho Chi Minh City
+# PM2.5 forecasting for Ho Chi Minh City
 
-This project is a Streamlit app for live air-quality monitoring and short-term PM2.5 forecasting in HCMC.
+## Summary
 
-## What the app does
+This project is a Streamlit application for real-time air-quality monitoring and short-term PM2.5 forecasting in Ho Chi Minh City. It fetches PM2.5 history from OpenAQ and weather data from Open-Meteo, performs preprocessing and feature construction, uses a CatBoost multi-horizon model (6 horizons), and presents results in a Streamlit UI.
 
-- Fetches live PM2.5 history from OpenAQ
-- Fetches live weather and gas pollutants from Open-Meteo
-- Computes Vietnam AQI categories and primary pollutant
-- Runs CatBoost multi-output inference for 6 future horizons (t+1 to t+6)
-- Displays a Dashboard page for current conditions and a Prediction page for forecast output
+![Alt text](img\img1.png)
 
-## Current architecture (src-focused)
+![Alt text](img\img2.png)
 
-- `App.py`
-  - Streamlit entry page.
-- `pages/1_Dashboard.py`
-  - Current pollutant/weather cards, AQI scale, and PM2.5 last-24h chart.
-- `pages/2_Prediction.py`
-  - Prediction workflow UI with:
-    - API autofill
-    - manual input overrides
-    - 6 fixed forecast cards (shown as `--` before inference)
-    - chart and text summary after clicking `Chay du bao`
-- `pages/3_Settings.py`
-  - Theme and chart color controls.
+## Goals
 
-- `src/api.py`
-  - Aggregates current data for Dashboard from OpenAQ + Open-Meteo and computes AQI.
-- `src/aqi.py`
-  - AQI breakpoints, nowcast logic, and VN AQI conversion.
-- `src/ui.py`
-  - Shared Streamlit CSS/theme utilities.
+- Monitor current PM2.5 from sensors / OpenAQ.
+- Provide short-term PM2.5 forecasts for 6 horizons (t+1 ... t+6).
+- Offer a Dashboard and Prediction page for interactive use.
 
-- `src/services/openaq_client.py`
-  - OpenAQ hourly PM2.5 history loader.
-- `src/services/openmeteo_client.py`
-  - Open-Meteo hourly weather history loader.
+## Project structure (high-level)
 
-- `src/inference/feature_builder.py`
-  - Feature engineering, scaling reconstruction, and multi-horizon feature/target preparation.
-- `src/inference/artifact.py`
-  - Model artifact discovery, loading, and rebuild fallback.
-- `src/inference/predict.py`
-  - End-to-end forecast orchestration for UI.
-- `src/inference/train_artifact.py`
-  - CLI entrypoint to rebuild deployable artifacts.
+- `App.py` — Streamlit entrypoint.
+- `config.py` — common configuration (env vars, constants).
+- `data/` — raw (`raw/`) and processed (`processed/`) datasets.
+- `notebooks/` — EDA, preprocessing, and training reference notebooks.
+- `model/` — helper scripts and model-related utilities.
+- `pages/` — Streamlit pages:
+  - `1_Dashboard.py` — current conditions and 24h PM2.5 chart.
+  - `2_Prediction.py` — prediction UI with autofill/manual override.
+  - `3_Settings.py` — theme and color controls.
+- `src/` — main source code:
+  - `src/api.py` — aggregates OpenAQ + Open-Meteo data and computes AQI.
+  - `src/aqi.py` — AQI breakpoints, nowcast logic, and VN conversion.
+  - `src/ui.py` — shared Streamlit CSS / theme helpers.
+  - `src/data/` — data collectors: `collect_openaq.py`, `collect_openmeteo.py`.
+  - `src/inference/` — inference pipeline and artifact management:
+    - `feature_builder.py`, `artifact.py`, `predict.py`, `train_artifact.py`.
+  - `src/services/` — API clients for OpenAQ / Open-Meteo.
 
-Note: `src/model.py` is a legacy mock module and is not used by the active Streamlit prediction flow.
+## Key data files
 
-## Model artifacts
+- `data/raw/` — raw inputs (e.g. `pm25_sensor_11357424.csv`, `weather_openmeteo.csv`).
+- `data/processed/` — cleaned and merged data (e.g. `pm25_processed_data.csv`).
 
-Primary artifact location used by inference:
+## Environment & Installation
 
-- `notebooks/model/multi_6h_weights/catboost_multi_horizon_deployable.cbm`
-- `notebooks/model/multi_6h_weights/deployment_metadata.json`
+Requirements: Python 3.10+ recommended.
 
-Training reference script:
+Windows (PowerShell):
 
-- `notebooks/model/6h_pm.py`
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
 
-Discovery fallback also scans:
-
-- `notebooks/model/`
-- `model/`
-- `models/`
-
-If no valid pair of model + metadata is found, the app can rebuild artifacts from local raw/processed CSV files.
-
-## Installation
+Git Bash / WSL:
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate
+source .venv/Scripts/activate
 pip install -r requirements.txt
-copy .env.example .env
 ```
 
-Set your OpenAQ key in `.env`:
+Create a `.env` file (or copy `.env.example` if present) and set required variables, for example:
 
-```env
+```
 OPENAQ_API_KEY=your_openaq_api_key
-```
-
-Optional runtime overrides:
-
-```env
 OPENAQ_SENSOR_ID=11357424
 OPENMETEO_LAT=10.8231
 OPENMETEO_LON=106.6297
@@ -92,30 +70,42 @@ OPENMETEO_LON=106.6297
 
 ## Run locally
 
-Optional prebuild:
+- (Optional) Rebuild deployable model artifacts from local data:
 
 ```bash
 python -m src.inference.train_artifact
 ```
 
-Run Streamlit:
+- Start the Streamlit app:
 
 ```bash
 streamlit run App.py
 ```
 
-## Data files
+Open the URL printed by Streamlit (default http://localhost:8501) in your browser.
 
-| File                                     | Purpose                                   |
-| ---------------------------------------- | ----------------------------------------- |
-| `data/raw/pm25_sensor_11357424.csv`      | Raw PM2.5 hourly observations             |
-| `data/raw/weather_openmeteo.csv`         | Raw hourly weather history                |
-| `data/processed/pm25_processed_data.csv` | Processed feature reference               |
-| `notebooks/model/6h_pm.py`               | Multi-horizon CatBoost training reference |
+## Model & Inference
 
-## Inference assumptions and notes
+- Reference deployable artifacts are stored in `notebooks/model/multi_6h_weights/` (e.g. `.cbm` and `deployment_metadata.json`).
+- `src/inference/artifact.py` locates and loads the model + metadata; if none are found, `train_artifact.py` can rebuild them from local CSVs.
+- `src/inference/predict.py` orchestrates end-to-end forecasting used by the UI.
 
-- Feature timestamps stay UTC-aligned to match training-era processing.
-- Horizon count is fixed at 6 in the current deployed pipeline.
-- Upstream provider latency can cause apparent "data lag" on Dashboard (for example, PM2.5 source updates later than weather).
-- Streamlit caching (`ttl=300`) is used for API-backed calls.
+## Technical notes
+
+- Forecast horizon is fixed at 6 (t+1..t+6) in the current pipeline.
+- AQI and nowcast logic live in `src/aqi.py` and follow VN breakpoints.
+- Streamlit caching (e.g. `ttl=300`) is used for API-backed calls to reduce load and latency.
+
+## Contributing
+
+- Create a feature branch, describe changes, and open a Pull Request.
+- To change the default sensor or data source, update `.env` or `config.py` accordingly.
+
+---
+
+If you want, I can:
+
+- (A) Replace the project `README.md` with this English version.
+- (B) Keep the existing `README.md` and keep this file `README_EN.md` alongside the Vietnamese version.
+
+Tell me A or B (or another preference) and I'll proceed.
