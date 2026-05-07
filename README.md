@@ -4,9 +4,9 @@
 
 This project is a Streamlit application for real-time air-quality monitoring and short-term PM2.5 forecasting in Ho Chi Minh City. It fetches PM2.5 history from OpenAQ and weather data from Open-Meteo, performs preprocessing and feature construction, uses a CatBoost multi-horizon model (6 horizons), and presents results in a Streamlit UI.
 
-![Alt text](img\img1.png)
+![Alt text](img/img1.png)
 
-![Alt text](img\img2.png)
+![Alt text](img/img2.png)
 
 ## Goals
 
